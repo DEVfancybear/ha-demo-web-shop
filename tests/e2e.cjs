@@ -359,6 +359,35 @@ async function cartState(page) {
     const overflowDetail = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     check('I3 no horizontal overflow on detail (390px)', overflowDetail <= 1, overflowDetail);
 
+    // Card action buttons: label must stay on one line and inside the card, also on the narrow
+    // 4-column layout (1280px+) where "Thêm vào giỏ" + "Chi tiết" do not fit side by side.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(BASE + '/products', { waitUntil: 'domcontentloaded' });
+    await waitCards(page);
+    const cardActions = await page.evaluate(() => {
+      const card = document.querySelector('article');
+      const btn = card.querySelector('button');
+      const label = Array.from(btn.childNodes).find((n) => n.nodeType === 3 && n.textContent.trim());
+      const range = document.createRange();
+      range.selectNode(label);
+      const detail = Array.from(card.querySelectorAll('a')).find((a) => a.textContent.trim() === 'Chi tiết');
+      const cardRect = card.getBoundingClientRect();
+      const boxes = [btn, detail].map((el) => el.getBoundingClientRect());
+      return {
+        labelLines: range.getClientRects().length,
+        overflowsBox: btn.scrollHeight > btn.clientHeight || btn.scrollWidth > btn.clientWidth,
+        spill: Math.max(...boxes.map((b) => b.bottom - cardRect.bottom), ...boxes.map((b) => b.right - cardRect.right)),
+        widestButton: Math.max(...boxes.map((b) => b.width)),
+        cardWidth: cardRect.width,
+      };
+    });
+    check('I4 card button label stays on one line (1440px)', cardActions.labelLines === 1, cardActions.labelLines);
+    check(
+      'I5 card buttons fit inside the card (1440px)',
+      !cardActions.overflowsBox && cardActions.spill <= 1 && cardActions.widestButton <= cardActions.cardWidth,
+      JSON.stringify(cardActions),
+    );
+
     // ---------- J. Console hygiene ----------
     check('J1 no page errors', pageErrors.length === 0, pageErrors.slice(0, 3));
     check('J2 no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3));

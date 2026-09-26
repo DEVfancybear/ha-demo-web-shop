@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { buttonClass } from "@/components/ui/button";
 import { PriceTag } from "@/components/common/price-tag";
 import { Rating } from "@/components/common/rating";
 import { ProductThumb } from "@/components/common/product-thumb";
@@ -10,7 +11,7 @@ import type { Product } from "@/types";
 export function ProductCard({ product, priority = false }: { product: Product; priority?: boolean }) {
   const discount = discountPercent(product.price, product.salePrice);
   return (
-    <article className="group flex flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900">
+    <article className="group @container flex flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900">
       <Link href={`/products/${product.slug}`} className="relative block">
         <ProductThumb
           emoji={product.emoji}
@@ -35,11 +36,17 @@ export function ProductCard({ product, priority = false }: { product: Product; p
         </h3>
         <Rating value={product.rating} reviewCount={product.reviewCount} />
         <PriceTag price={product.price} salePrice={product.salePrice} className="mt-auto" />
-        <div className="mt-2 flex gap-2">
-          <AddToCartButton product={product} size="sm" className="flex-1" label="Thêm vào giỏ" />
+        {/* Hai nút thao tác: xếp ngang khi thẻ đủ rộng, xếp dọc khi thẻ hẹp (lưới 4 cột kèm sidebar). */}
+        <div className="mt-2 flex flex-col gap-2 @[260px]:flex-row">
+          <AddToCartButton
+            product={product}
+            size="sm"
+            className="w-full @[260px]:w-auto @[260px]:flex-1"
+            label="Thêm vào giỏ"
+          />
           <Link
             href={`/products/${product.slug}`}
-            className="inline-flex h-9 items-center rounded-full border border-zinc-300 px-3 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            className={buttonClass({ variant: "outline", size: "sm", className: "w-full @[260px]:w-auto" })}
           >
             Chi tiết
           </Link>
