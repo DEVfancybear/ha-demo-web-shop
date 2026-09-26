@@ -1,103 +1,131 @@
-import Image from "next/image";
+import Link from "next/link";
+import { BadgeCheck, Headphones, RefreshCcw, Truck } from "lucide-react";
+import { buttonClass } from "@/components/ui/button";
+import { ProductGrid } from "@/components/product/product-grid";
+import { getCategories, getFeaturedProducts } from "@/data/catalog";
+import { formatNumber } from "@/lib/format";
+import { siteConfig } from "@/lib/config";
 
-export default function Home() {
+const benefits = [
+  { icon: Truck, title: "Giao nhanh 2 giờ", text: "Nội thành TP.HCM và Hà Nội, miễn phí từ 500.000₫." },
+  { icon: BadgeCheck, title: "Hàng chính hãng", text: "Bảo hành 12–24 tháng, đổi mới trong 30 ngày." },
+  { icon: RefreshCcw, title: "Đổi trả dễ dàng", text: "Hỗ trợ đổi trả tận nhà, không cần hoá đơn giấy." },
+  { icon: Headphones, title: "Tư vấn 24/7", text: `Hotline ${siteConfig.hotline} và chat trực tuyến.` },
+];
+
+export default function HomePage() {
+  const featured = getFeaturedProducts(8);
+  const categories = getCategories();
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <div className="space-y-14">
+      <section className="overflow-hidden rounded-3xl border border-zinc-200 bg-gradient-to-br from-zinc-50 via-white to-zinc-100 dark:border-zinc-800 dark:from-zinc-900 dark:via-zinc-950 dark:to-zinc-900">
+        <div className="grid gap-8 p-8 lg:grid-cols-2 lg:p-12">
+          <div className="space-y-5">
+            <span className="inline-flex rounded-full bg-zinc-900 px-3 py-1 text-xs font-semibold text-white dark:bg-white dark:text-zinc-900">
+              Ưu đãi tháng 9 · giảm tới 15%
+            </span>
+            <h1 className="text-3xl leading-tight font-bold sm:text-4xl">
+              Đồ công nghệ cho mọi nhu cầu, giá minh bạch
+            </h1>
+            <p className="max-w-lg text-zinc-600 dark:text-zinc-300">
+              {formatNumber(featured.length * 2)} sản phẩm demo thuộc {categories.length} nhóm hàng: điện thoại, laptop,
+              tai nghe, đồng hồ và phụ kiện. Đặt hàng thử ngay để trải nghiệm luồng mua sắm hoàn chỉnh.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <Link href="/products" className={buttonClass({ size: "lg" })}>
+                Mua sắm ngay
+              </Link>
+              <Link href="/orders" className={buttonClass({ variant: "outline", size: "lg" })}>
+                Xem đơn hàng demo
+              </Link>
+            </div>
+            <dl className="grid grid-cols-3 gap-4 pt-4 text-sm">
+              <div>
+                <dt className="text-zinc-500">Sản phẩm</dt>
+                <dd className="text-lg font-semibold">16</dd>
+              </div>
+              <div>
+                <dt className="text-zinc-500">Danh mục</dt>
+                <dd className="text-lg font-semibold">{categories.length}</dd>
+              </div>
+              <div>
+                <dt className="text-zinc-500">Đánh giá</dt>
+                <dd className="text-lg font-semibold">4.6/5</dd>
+              </div>
+            </dl>
+          </div>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+          <div className="grid grid-cols-2 gap-3 self-center">
+            {featured.slice(0, 4).map((product) => (
+              <Link
+                key={product.id}
+                href={`/products/${product.slug}`}
+                className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white/70 p-3 transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900/60"
+              >
+                <span aria-hidden className={`grid h-12 w-12 place-items-center rounded-xl bg-gradient-to-br text-2xl ${product.tone}`}>
+                  {product.emoji}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{product.name}</span>
+                  <span className="block text-xs text-zinc-500">{product.brand}</span>
+                </span>
+              </Link>
+            ))}
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </section>
+
+      <section aria-labelledby="danh-muc">
+        <div className="mb-5 flex items-end justify-between">
+          <h2 id="danh-muc" className="text-xl font-bold">
+            Danh mục nổi bật
+          </h2>
+          <Link href="/products" className="text-sm font-medium hover:underline">
+            Xem tất cả
+          </Link>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          {categories.map((category) => (
+            <Link
+              key={category.slug}
+              href={`/products?category=${category.slug}`}
+              className="rounded-2xl border border-zinc-200 bg-white p-5 transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900"
+            >
+              <span aria-hidden className="text-3xl">{category.emoji}</span>
+              <h3 className="mt-3 font-semibold">{category.name}</h3>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{category.description}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section aria-labelledby="noi-bat">
+        <div className="mb-5 flex items-end justify-between">
+          <h2 id="noi-bat" className="text-xl font-bold">
+            Sản phẩm nổi bật
+          </h2>
+          <Link href="/products?sort=rating" className="text-sm font-medium hover:underline">
+            Xem theo đánh giá
+          </Link>
+        </div>
+        <ProductGrid products={featured} />
+      </section>
+
+      <section aria-labelledby="vi-sao">
+        <h2 id="vi-sao" className="mb-5 text-xl font-bold">
+          Vì sao chọn {siteConfig.name}?
+        </h2>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {benefits.map((benefit) => (
+            <div key={benefit.title} className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+              <benefit.icon className="text-zinc-900 dark:text-zinc-100" size={22} />
+              <h3 className="mt-3 font-semibold">{benefit.title}</h3>
+              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{benefit.text}</p>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

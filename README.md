@@ -1,36 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ShopHA — demo shop (Next.js 15)
 
-## Getting Started
+Cửa hàng demo đồ công nghệ: điện thoại, laptop, tai nghe, đồng hồ và phụ kiện.
+Toàn bộ dữ liệu là giả lập, **không có giao dịch thật**.
 
-First, run the development server:
+## Chạy dự án
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev        # http://localhost:3000
+npm run build      # build production
+npm run lint       # eslint
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Kiến trúc
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Lớp | Vị trí | Ghi chú |
+|---|---|---|
+| Trang | `src/app/**/page.tsx` | App Router, server component cho danh mục & chi tiết |
+| Mock API | `src/app/api/*/route.ts` | `products`, `products/[slug]`, `categories`, `orders`, `orders/[id]` |
+| Dữ liệu | `src/data/catalog.ts` | 16 sản phẩm, 5 danh mục, hàm lọc/sắp xếp/phân trang |
+| Đơn hàng | `src/lib/orders.ts` | Lưu trong bộ nhớ server, tính giá/phí/giảm giá ở phía server |
+| Giỏ hàng | `src/stores/cart-store.ts` | Zustand + persist vào `localStorage` |
+| UI | `src/components/**` | shadcn-style: button, card, badge, field, layout, product, cart, checkout |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Luồng mua sắm
 
-## Learn More
+1. Trang chủ → chọn danh mục.
+2. `/products` lọc theo danh mục, thương hiệu, giá tối đa, từ khoá, sắp xếp, phân trang (đồng bộ qua URL).
+3. `/products/[slug]` xem chi tiết, chọn số lượng, thêm vào giỏ.
+4. `/cart` sửa số lượng, xoá, xem tạm tính/phí vận chuyển/giảm giá.
+5. `/checkout` nhập thông tin (có validate), chọn phương thức thanh toán, gửi `POST /api/orders`.
+6. `/checkout/success?orderId=...` xem kết quả, `/orders` xem toàn bộ đơn trong phiên chạy.
 
-To learn more about Next.js, take a look at the following resources:
+## Quy tắc tính tiền
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Miễn phí vận chuyển cho đơn từ 500.000₫, dưới mức đó phí 30.000₫.
+- Giảm 10% cho đơn từ 5.000.000₫.
+- Server tính lại toàn bộ tiền từ giá trong `catalog.ts` và kiểm tra tồn kho trước khi tạo đơn.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Kiểm thử
 
-## Deploy on Vercel
+Bộ kiểm thử E2E (Playwright, chạy trên Edge có sẵn của máy) gồm 74 kiểm tra:
+trang chủ, tìm kiếm, lọc theo danh mục/thương hiệu/giá, sắp xếp, phân trang,
+chi tiết sản phẩm, giỏ hàng, thanh toán, danh sách đơn, trạng thái rỗng/404,
+layout mobile 390px và log console. Mọi so sánh danh sách đều đối chiếu với mock API.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm run dev -- --port 3210     # cửa sổ 1: server đang chạy
+npm run test:e2e               # cửa sổ 2: chạy kiểm thử
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Mặc định test gọi `http://127.0.0.1:3210`; đổi bằng `BASE_URL=http://localhost:3000 npm run test:e2e`.
+- Dùng `PW_CHANNEL=chrome` nếu máy không có Edge.
+- Script nằm ở `tests/e2e.cjs`, in ra JSON `{ total, passed, failed, checks }` và trả mã lỗi 1 khi có kiểm tra hỏng.
+
+## Biến môi trường
+
+Không bắt buộc. Xem `.env.example` nếu muốn đổi tên site, hotline, phí vận chuyển
+(các giá trị hiện nằm trong `src/lib/config.ts`).
+
+## Hạn chế đã biết
+
+- Đơn hàng chỉ nằm trong bộ nhớ server: restart là mất.
+- Ảnh sản phẩm là gradient + emoji thay cho ảnh thật (chạy được khi không có mạng).
+- Không có đăng nhập, không có thanh toán thật.
+- Đơn hàng nằm trong `globalThis.__shopHaOrders` (Map của tiến trình server) nên page và API dùng chung dữ liệu; restart server là mất đơn.
