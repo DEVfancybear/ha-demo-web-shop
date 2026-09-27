@@ -24,6 +24,17 @@ The project runs the native TypeScript 7 compiler, but the toolchain still needs
 - The `typescript` package name is aliased to `@typescript/typescript6`, because `typescript-eslint` and the Next.js build load the compiler API — TypeScript 7 does not ship one yet.
 - `next build` type-checks through the project-local CLI (`experimental.useTypeScriptCli` is on by default in Next.js 16).
 
+## React Compiler
+
+The project runs the React Compiler (stable in Next.js 16), so components and hooks are memoized
+automatically and the code does not use `useMemo`, `useCallback` or `React.memo` by hand.
+
+- `reactCompiler: true` in `next.config.ts`; Next.js only compiles the client graph, server components are skipped.
+- `babel-plugin-react-compiler` (devDependency) is required — Next.js declares it as an optional peer dependency and fails the build with `Failed to load the \`babel-plugin-react-compiler\`` when it is missing, so keep devDependencies installed wherever the build runs.
+- The defaults are kept: `compilationMode: "infer"` (components and hooks only) and `panicThreshold: "none"` (a component the compiler cannot analyze is skipped instead of failing the build).
+- `eslint-config-next` 16 already enables the compiler-aware `react-hooks` rules (for example `react-hooks/set-state-in-effect`), so `npm run lint` blocks code the compiler would have to skip.
+- To confirm the compiler really ran, download a client chunk from a running dev server and search it for `react.memo_cache_sentinel` — the compiler emits that marker in every memoized component.
+
 ## Architecture
 
 | Layer | Location | Notes |

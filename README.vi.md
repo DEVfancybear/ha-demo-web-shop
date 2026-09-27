@@ -24,6 +24,17 @@ Dự án chạy compiler TypeScript 7 (bản native), nhưng toolchain vẫn c�
 - Tên package `typescript` được alias sang `@typescript/typescript6` vì `typescript-eslint` và bước build của Next.js cần compiler API — TypeScript 7 chưa có API này.
 - `next build` kiểm tra type qua CLI của dự án (`experimental.useTypeScriptCli` mặc định bật ở Next.js 16).
 
+## React Compiler
+
+Dự án bật React Compiler (đã ổn định ở Next.js 16), nên component và hook được memo hoá tự động;
+mã nguồn không dùng `useMemo`, `useCallback` hay `React.memo` bằng tay.
+
+- `reactCompiler: true` trong `next.config.ts`; Next.js chỉ biên dịch phần client, server component bị bỏ qua.
+- Cần `babel-plugin-react-compiler` (devDependency) — Next.js khai báo nó là optional peer dependency và build sẽ báo lỗi `Failed to load the \`babel-plugin-react-compiler\`` nếu thiếu, nên nơi chạy build phải cài cả devDependencies.
+- Giữ mặc định: `compilationMode: "infer"` (chỉ component và hook) và `panicThreshold: "none"` (component mà compiler không phân tích được sẽ bị bỏ qua thay vì làm hỏng build).
+- `eslint-config-next` 16 đã bật sẵn các rule `react-hooks` dựa trên compiler (ví dụ `react-hooks/set-state-in-effect`), nên `npm run lint` chặn sẵn những đoạn code mà compiler phải bỏ qua.
+- Muốn kiểm tra compiler có chạy thật không, tải một chunk phía client từ dev server đang chạy và tìm chuỗi `react.memo_cache_sentinel` — compiler chèn marker này vào mọi component được memo hoá.
+
 ## Kiến trúc
 
 | Lớp | Vị trí | Ghi chú |
