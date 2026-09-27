@@ -1,4 +1,4 @@
-# ShopHA — cửa hàng demo (Next.js 15)
+# ShopHA — cửa hàng demo (Next.js 16)
 
 [English](README.md) · **Tiếng Việt**
 
@@ -13,7 +13,16 @@ npm run dev        # http://localhost:3000
 npm run build      # build production
 npm run start      # chạy bản production đã build
 npm run lint       # eslint
+npm run typecheck  # tsc --noEmit (TypeScript 7)
 ```
+
+## TypeScript
+
+Dự án chạy compiler TypeScript 7 (bản native), nhưng toolchain vẫn cần API của TypeScript 6:
+
+- `@typescript/native` (alias của `typescript@7`) cung cấp binary `tsc`, nên `npm run typecheck` dùng TypeScript 7.
+- Tên package `typescript` được alias sang `@typescript/typescript6` vì `typescript-eslint` và bước build của Next.js cần compiler API — TypeScript 7 chưa có API này.
+- `next build` kiểm tra type qua CLI của dự án (`experimental.useTypeScriptCli` mặc định bật ở Next.js 16).
 
 ## Kiến trúc
 
@@ -43,7 +52,7 @@ npm run lint       # eslint
 
 ## Kiểm thử
 
-Bộ kiểm thử E2E (Playwright, chạy trên Edge có sẵn của máy) gồm 74 kiểm tra:
+Bộ kiểm thử E2E (Playwright, chạy trên Edge có sẵn của máy) gồm 76 kiểm tra:
 trang chủ, tìm kiếm, lọc theo danh mục/thương hiệu/giá, sắp xếp, phân trang,
 chi tiết sản phẩm, giỏ hàng, thanh toán, danh sách đơn, trạng thái rỗng/404,
 layout mobile 390px và log console. Mọi so sánh danh sách đều đối chiếu với mock API.
@@ -54,6 +63,7 @@ npm run test:e2e               # cửa sổ 2: chạy kiểm thử
 ```
 
 - Mặc định test gọi `http://127.0.0.1:3210`; đổi bằng `BASE_URL=http://localhost:3000 npm run test:e2e`.
+- Dev server cho phép `127.0.0.1` qua `allowedDevOrigins` trong `next.config.ts`; Next.js 16 chặn request cross-origin ở chế độ dev theo mặc định, nên thiếu entry đó thì trang vẫn render nhưng không hydrate.
 - Dùng `PW_CHANNEL=chrome` nếu máy không có Edge.
 - Script nằm ở `tests/e2e.cjs`, in ra JSON `{ total, passed, failed, checks }` và trả mã lỗi 1 khi có kiểm tra hỏng.
 

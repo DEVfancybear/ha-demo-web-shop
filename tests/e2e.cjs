@@ -197,6 +197,9 @@ async function cartState(page) {
 
     // ---------- D. Product detail + add to cart ----------
     await page.goto(BASE + '/products/dien-thoai-saigon-x9-pro', { waitUntil: 'domcontentloaded' });
+    // Next.js 16 streams the page shell first: the header shows up before the product body.
+    // Wait for the quantity stepper so the assertions below read a fully rendered page.
+    await page.waitForSelector('button[aria-label="Tăng số lượng"]', { timeout: 20000 });
     const detailBody = await page.locator('body').innerText();
     check('D1 detail heading', /Saigon X9 Pro 256GB/.test(detailBody), detailBody.split('\n').slice(0, 3).join(' / '));
     check('D2 detail shows sale price 18.990.000', detailBody.includes(vnd(18990000).replace(/\s/g, ' ')) || detailBody.includes('18.990.000'), vnd(18990000));

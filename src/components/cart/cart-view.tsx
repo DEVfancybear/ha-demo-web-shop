@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonClass } from "@/components/ui/button";
@@ -8,12 +7,12 @@ import { EmptyState } from "@/components/common/empty-state";
 import { CartLineItem } from "@/components/cart/cart-line-item";
 import { CartTotals } from "@/components/cart/cart-totals";
 import { useCartStore } from "@/stores/cart-store";
+import { useIsMounted } from "@/lib/use-is-mounted";
 
 export function CartView() {
   const items = useCartStore((state) => state.items);
   const clear = useCartStore((state) => state.clear);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useIsMounted();
 
   if (!mounted) {
     return (

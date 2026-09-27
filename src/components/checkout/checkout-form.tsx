@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +9,7 @@ import { FieldError, Input, Label, Textarea } from "@/components/ui/field";
 import { EmptyState } from "@/components/common/empty-state";
 import { CartTotals } from "@/components/cart/cart-totals";
 import { useCartStore } from "@/stores/cart-store";
+import { useIsMounted } from "@/lib/use-is-mounted";
 import type { CustomerInfo, PaymentMethod } from "@/types";
 
 type FormState = {
@@ -39,7 +40,7 @@ export function CheckoutForm() {
   const items = useCartStore((state) => state.items);
   const clear = useCartStore((state) => state.clear);
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
+  const mounted = useIsMounted();
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
@@ -51,8 +52,6 @@ export function CheckoutForm() {
     note: "",
     paymentMethod: "cod",
   });
-
-  useEffect(() => setMounted(true), []);
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));

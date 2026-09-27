@@ -1,4 +1,4 @@
-# ShopHA — demo shop (Next.js 15)
+# ShopHA — demo shop (Next.js 16)
 
 **English** · [Tiếng Việt](README.vi.md)
 
@@ -13,7 +13,16 @@ npm run dev        # http://localhost:3000
 npm run build      # production build
 npm run start      # serve the production build
 npm run lint       # eslint
+npm run typecheck  # tsc --noEmit (TypeScript 7)
 ```
+
+## TypeScript
+
+The project runs the native TypeScript 7 compiler, but the toolchain still needs the TypeScript 6 API:
+
+- `@typescript/native` (an alias of `typescript@7`) provides the `tsc` binary, so `npm run typecheck` uses TypeScript 7.
+- The `typescript` package name is aliased to `@typescript/typescript6`, because `typescript-eslint` and the Next.js build load the compiler API — TypeScript 7 does not ship one yet.
+- `next build` type-checks through the project-local CLI (`experimental.useTypeScriptCli` is on by default in Next.js 16).
 
 ## Architecture
 
@@ -43,7 +52,7 @@ npm run lint       # eslint
 
 ## Tests
 
-The E2E suite (Playwright, running on the machine's built-in Edge) has 74 checks: home page, search, category/brand/price filters, sorting, pagination, product detail, cart, checkout, order list, empty and 404 states, the 390px mobile layout and console logs. Every list assertion is compared against the mock API.
+The E2E suite (Playwright, running on the machine's built-in Edge) has 76 checks: home page, search, category/brand/price filters, sorting, pagination, product detail, cart, checkout, order list, empty and 404 states, the 390px mobile layout and console logs. Every list assertion is compared against the mock API.
 
 ```bash
 npm run dev -- --port 3210     # window 1: server
@@ -51,6 +60,7 @@ npm run test:e2e               # window 2: run the tests
 ```
 
 - By default the tests call `http://127.0.0.1:3210`; change it with `BASE_URL=http://localhost:3000 npm run test:e2e`.
+- The dev server allows `127.0.0.1` through `allowedDevOrigins` in `next.config.ts`; Next.js 16 blocks cross-origin dev requests by default, so pages would render without hydrating without that entry.
 - Use `PW_CHANNEL=chrome` if the machine has no Edge.
 - The script lives in `tests/e2e.cjs`; it prints JSON `{ total, passed, failed, checks }` and exits with code 1 when a check fails.
 

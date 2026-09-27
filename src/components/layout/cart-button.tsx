@@ -1,15 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { ShoppingCart } from "lucide-react";
 import { useCartCount } from "@/stores/cart-store";
+import { useIsMounted } from "@/lib/use-is-mounted";
 import { cn } from "@/lib/utils";
 
 export function CartButton({ className }: { className?: string }) {
   const count = useCartCount();
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useIsMounted();
 
   return (
     <Link
