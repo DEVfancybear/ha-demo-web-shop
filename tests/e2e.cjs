@@ -97,6 +97,16 @@ async function cartState(page) {
     check('B4 summary line mentions found count', /Tìm thấy\s+\d+\s+sản phẩm/.test(await page.locator('body').innerText()),
       headerLine.slice(0, 80));
 
+    // B5: tìm tiếng Việt phải bỏ dấu và khớp cả tên danh mục ("điện thoại" -> 3 máy).
+    for (const query of ['điện thoại', 'dien thoai', 'ĐIỆN THOẠI']) {
+      const apiVi = await apiProducts({ q: query, perPage: 50 });
+      await page.goto(`${BASE}/products?q=${encodeURIComponent(query)}`, { waitUntil: 'domcontentloaded' });
+      await waitCards(page);
+      const domVi = await titles(page);
+      check(`B5 search "${query}" finds the 3 phones`, apiVi.total === 3 && domVi.length === 3,
+        `dom=${domVi.length} api=${apiVi.total}`);
+    }
+
     // ---------- C. Filters & sorting ----------
     // Reset search first: category change keeps ?q=, so we start from the full list.
     await page.goto(BASE + '/products', { waitUntil: 'domcontentloaded' });
@@ -181,6 +191,33 @@ async function cartState(page) {
     const allTitles = await titles(page);
     check('C7 clear filters resets to all products (page 1 of 8)', allTitles.length === 8, allTitles.length);
 
+    // C9/C10: page/perPage phải được làm tròn xuống số nguyên.
+    const decPerPage = await apiProducts({ perPage: 0.5 });
+    check('C9 perPage=0.5 is floored to 1', Number.isInteger(decPerPage.perPage) && decPerPage.perPage === 1
+      && decPerPage.items.length === 1 && decPerPage.totalPages === 16,
+      JSON.stringify({ perPage: decPerPage.perPage, items: decPerPage.items.length, totalPages: decPerPage.totalPages }));
+    const decPage = await apiProducts({ page: 1.5 });
+    check('C10 page=1.5 is floored to page 1', decPage.page === 1, JSON.stringify({ page: decPage.page }));
+
+    // C11: `maxPrice` rác / dưới mốc nhỏ nhất / lệch bước giá đều không được vỡ UI và nhãn phải khớp `input.value`.
+    for (const badMax of ['abc', '100', '1234567']) {
+      await page.goto(`${BASE}/products?maxPrice=${badMax}`, { waitUntil: 'domcontentloaded' });
+      await waitCards(page);
+      const sliderState = await page.evaluate(() => {
+        const range = document.querySelector('aside input[type="range"]');
+        const label = Array.from(document.querySelectorAll('aside p')).map((p) => p.textContent.trim()).find((t) => t.startsWith('Dưới')) || '';
+        return { value: range ? Number(range.value) : null, min: range ? Number(range.min) : null, max: range ? Number(range.max) : null, label };
+      });
+      check(`C11 maxPrice=${badMax} renders a real bound, not NaN`,
+        !/NaN/.test(sliderState.label) && Number.isFinite(sliderState.value)
+          && sliderState.value >= sliderState.min && sliderState.value <= sliderState.max,
+        JSON.stringify(sliderState));
+      check(`C11b maxPrice=${badMax} label matches the slider value`, digits(sliderState.label) === String(sliderState.value),
+        JSON.stringify(sliderState));
+    }
+    await page.goto(BASE + '/products', { waitUntil: 'domcontentloaded' });
+    await waitCards(page);
+
     // pagination
     const page2 = await apiProducts({ page: 2 });
     if (page2.totalPages > 1) {
@@ -215,7 +252,8 @@ async function cartState(page) {
     const badge = await page.locator('header a[aria-label^="Giỏ hàng"]').getAttribute('aria-label');
     check('D6 header cart badge counts 3', badge.includes('3'), badge);
     const st1 = await cartState(page);
-    check('D7 cart persisted in localStorage', st1.length === 1 && st1[0].productId === 'p01' && st1[0].quantity === 3 && st1[0].price === 18990000,
+    check('D7 cart stores only productId + quantity', st1.length === 1 && st1[0].productId === 'p01' && st1[0].quantity === 3
+      && Object.keys(st1[0]).sort().join(',') === 'productId,quantity',
       JSON.stringify(st1));
 
     // ---------- E. Cart page ----------
@@ -265,7 +303,8 @@ async function cartState(page) {
     await page.waitForFunction(() => document.querySelectorAll('li span[aria-live="polite"]').length === 1, null, { timeout: 10000 });
     check('E9 removing a line leaves 1 product', true, null);
     const st2 = await cartState(page);
-    check('E10 remaining cart line is p01 x2', st2.length === 1 && st2[0].productId === 'p01' && st2[0].quantity === 2, JSON.stringify(st2));
+    check('E10 remaining cart line is p01 x2 (still id + quantity only)',
+      st2.length === 1 && st2[0].productId === 'p01' && st2[0].quantity === 2 && st2[0].price === undefined, JSON.stringify(st2));
     const subAfter = await totalRow(page, 'Tạm tính');
     check('E11 totals recomputed after removal', digits(subAfter) === '37980000', subAfter);
 
@@ -317,23 +356,40 @@ async function cartState(page) {
 
     // order detail via API cross-check
     const orderId = new URL(page.url()).searchParams.get('orderId');
-    const orderApi = await (await fetch(`${BASE}/api/orders/${orderId}`)).json();
+    const orderApi = await (await fetch(`${BASE}/api/orders/${orderId}?phone=0912345678`)).json();
     check('F12 order API total matches UI',
       orderApi.total === 34182000 && orderApi.subtotal === 37980000 && orderApi.discount === 3798000 && orderApi.shippingFee === 0,
       JSON.stringify({ subtotal: orderApi.subtotal, discount: orderApi.discount, shipping: orderApi.shippingFee, total: orderApi.total }));
     check('F13 order API stores customer + momo', orderApi.customer.paymentMethod === 'momo' && orderApi.customer.phone === '0912345678', JSON.stringify(orderApi.customer));
     check('F14 order API items', orderApi.items.length === 1 && orderApi.items[0].quantity === 2 && orderApi.items[0].productId === 'p01', JSON.stringify(orderApi.items));
+    const orderNoPhone = await fetch(`${BASE}/api/orders/${orderId}`);
+    check('F15 order detail without phone is refused', orderNoPhone.status === 404, orderNoPhone.status);
 
-    // ---------- G. Orders list ----------
+    // ---------- G. Order lookup by phone (no public dump of other customers) ----------
     await page.getByRole('link', { name: 'Đơn hàng' }).first().click();
     await page.waitForURL(/\/orders$/, { timeout: 15000 });
-    await page.waitForSelector('main ul li', { timeout: 15000 });
-    if (orderCode) await page.waitForSelector(`text=${orderCode}`, { timeout: 15000 });
+    await page.waitForSelector('#lookup-phone', { timeout: 15000 });
+    const ordersBefore = await page.locator('body').innerText();
+    check('G1 orders page shows nothing before a lookup',
+      !ordersBefore.includes('Nguyễn Văn Test') && !ordersBefore.includes('0912345678'), ordersBefore.replace(/\n+/g, ' | ').slice(0, 120));
+
+    await page.fill('#lookup-phone', '0900000000');
+    await page.getByRole('button', { name: /Tra cứu/ }).click();
+    await page.waitForSelector('text=Không tìm thấy đơn hàng nào', { timeout: 15000 });
+    check('G2 another phone shows no orders', !(await page.locator('body').innerText()).includes(orderCode || 'HA-'), null);
+
+    await page.fill('#lookup-phone', '0912345678');
+    await page.getByRole('button', { name: /Tra cứu/ }).click();
+    await page.waitForSelector(`text=${orderCode}`, { timeout: 15000 });
     const ordersBody = await page.locator('body').innerText();
-    check('G1 new order listed', orderCode ? ordersBody.includes(orderCode) : false, orderCode);
-    check('G2 order card shows status + total', /Chờ xác nhận/.test(ordersBody) && ordersBody.includes('34.182.000'), null);
-    const ordersApi = await (await fetch(`${BASE}/api/orders`)).json();
-    check('G3 orders API count matches list', ordersApi.orders.length >= 1, ordersApi.orders.length);
+    check('G3 own phone lists the order', ordersBody.includes('34.182.000'), null);
+    check('G4 order card shows the status label', /Chờ xác nhận/.test(ordersBody), null);
+    const noPhoneStatus = (await fetch(`${BASE}/api/orders`)).status;
+    check('G5 orders API without phone is refused', noPhoneStatus === 400, noPhoneStatus);
+    const ordersApi = await (await fetch(`${BASE}/api/orders?phone=0912345678`)).json();
+    check('G6 orders API only returns orders of that phone',
+      ordersApi.orders.length >= 1 && ordersApi.orders.every((o) => o.customer.phone === '0912345678'),
+      ordersApi.orders.length);
 
     // ---------- H. Empty states & 404 ----------
     await page.goto(BASE + '/cart', { waitUntil: 'domcontentloaded' });
@@ -390,6 +446,105 @@ async function cartState(page) {
       !cardActions.overflowsBox && cardActions.spill <= 1 && cardActions.widestButton <= cardActions.cardWidth,
       JSON.stringify(cardActions),
     );
+
+    // ---------- K. Cart integrity: sửa localStorage không đổi được giá/số lượng ----------
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto(BASE + '/cart', { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => {
+      localStorage.setItem('shop-ha-cart', JSON.stringify({
+        state: {
+          items: [{
+            productId: 'p01', slug: 'hang-gia', name: 'Hàng giả', price: 1000000,
+            emoji: '📱', tone: 'from-sky-200 to-indigo-300', quantity: 200,
+          }],
+        },
+        version: 1,
+      }));
+    });
+    await page.goto(BASE + '/cart', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('li span[aria-live="polite"]', { timeout: 15000 });
+    const tamperedLine = (await page.locator('li').first().innerText()).replace(/\n+/g, ' | ');
+    const tamperedQty = (await page.locator('li span[aria-live="polite"]').first().innerText()).trim();
+    const tamperedSub = await totalRow(page, 'Tạm tính');
+    check('K1 quantity is clamped to the catalog stock (12)', tamperedQty === '12', tamperedQty);
+    check('K2 cart shows the catalog product, not the localStorage name/price',
+      tamperedLine.includes('Saigon X9 Pro 256GB') && !tamperedLine.includes('Hàng giả') && !tamperedLine.includes('1.000.000'),
+      tamperedLine.slice(0, 160));
+    check('K3 subtotal uses the catalog price (12 x 18.990.000)', digits(tamperedSub) === '227880000', tamperedSub);
+    check('K4 stepper is disabled at the stock limit',
+      await page.locator('li button[aria-label="Tăng số lượng"]').first().isDisabled(), null);
+    const tamperedStored = await cartState(page);
+    check('K5 store rewrites localStorage to id + clamped quantity',
+      tamperedStored.length === 1 && Object.keys(tamperedStored[0]).sort().join(',') === 'productId,quantity'
+        && tamperedStored[0].quantity === 12,
+      JSON.stringify(tamperedStored));
+    await page.evaluate(() => localStorage.removeItem('shop-ha-cart'));
+
+    // ---------- L. Mobile 390px: ô tìm kiếm + bộ lọc thu gọn ----------
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+    await waitCards(page);
+    const visibleSearch = await page.locator('form[role="search"] input[name="q"]:visible').count();
+    check('L1 mobile shows a search box', visibleSearch >= 1, visibleSearch);
+    await page.locator('form[role="search"] input[name="q"]:visible').first().fill('tai nghe');
+    await page.locator('form[role="search"] input[name="q"]:visible').first().press('Enter');
+    await page.waitForURL(/q=tai/, { timeout: 15000 });
+    await waitCards(page);
+    const mobileTitles = await titles(page);
+    const apiMobile = await apiProducts({ q: 'tai nghe', perPage: 50 });
+    check('L2 mobile search returns the same list as the API',
+      mobileTitles.length > 0 && JSON.stringify(mobileTitles) === JSON.stringify(apiMobile.items.map((p) => p.name.trim())),
+      JSON.stringify({ dom: mobileTitles, api: apiMobile.items.map((p) => p.name) }));
+
+    await page.goto(BASE + '/products', { waitUntil: 'domcontentloaded' });
+    await waitCards(page);
+    check('L3 filter panel starts collapsed on mobile',
+      (await page.locator('aside input[type="range"]:visible').count()) === 0, null);
+    const firstCardBox = await page.locator('article').first().boundingBox();
+    check('L4 products start within the first screen on mobile', firstCardBox.y < 700, Math.round(firstCardBox.y));
+    await page.locator('aside button[aria-expanded]').first().click();
+    await page.waitForSelector('aside input[type="range"]:visible', { timeout: 10000 });
+    check('L5 "Mở lọc" reveals the filters', true, null);
+    await page.locator('aside button', { hasText: 'Laptop' }).first().click();
+    await page.waitForURL(/category=laptop/, { timeout: 15000 });
+    await waitCards(page);
+    check('L6 category filter still works on mobile',
+      new URL(page.url()).searchParams.get('category') === 'laptop', page.url());
+
+    // ---------- M. Trừ tồn kho khi tạo đơn ----------
+    // Chọn sản phẩm còn hàng ít nhất (đọc từ API) để chạy lại được trên server đang giữ trạng thái.
+    const stockList = (await (await fetch(`${BASE}/api/products?perPage=50`)).json()).items;
+    const target = stockList.filter((item) => item.stock > 0).sort((a, b) => a.stock - b.stock)[0];
+    check('M0 there is a product left in stock to order', Boolean(target),
+      JSON.stringify(stockList.map((item) => `${item.id}:${item.stock}`)));
+    const stockBefore = target ? target.stock : 0;
+    const orderPayload = (quantity) => JSON.stringify({
+      items: [{ productId: target.id, quantity }],
+      customer: { name: 'Trần Kho', phone: '0987654321', email: '', address: '456 Lê Lợi, Quận 3, TP. HCM', paymentMethod: 'cod' },
+    });
+    const firstOrder = await fetch(`${BASE}/api/orders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: orderPayload(stockBefore),
+    });
+    check('M1 order for the whole stock is accepted', firstOrder.status === 201, firstOrder.status);
+    const stockAfter = (await (await fetch(`${BASE}/api/products/${target.slug}`)).json()).product.stock;
+    check('M2 stock is decremented by the ordered quantity',
+      stockBefore > 0 && stockAfter === 0, JSON.stringify({ product: target.id, stockBefore, stockAfter }));
+    const secondOrder = await fetch(`${BASE}/api/orders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: orderPayload(1),
+    });
+    const secondBody = await secondOrder.json();
+    check('M3 second order is rejected with 409', secondOrder.status === 409, secondOrder.status);
+    check('M3b 409 message names the remaining stock', /chỉ còn 0 sản phẩm/.test(secondBody.message || ''), secondBody.message);
+
+    // ---------- N. Không lộ đơn của người khác ----------
+    const nakedSuccess = await page.goto(`${BASE}/checkout/success?orderId=${orderId}`, { waitUntil: 'domcontentloaded' });
+    const nakedBody = await page.locator('body').innerText();
+    check('N1 success page without phone does not reveal the order',
+      nakedSuccess.status() === 200 && /Chưa tra được đơn hàng/.test(nakedBody) && !/0912345678/.test(nakedBody),
+      nakedBody.replace(/\n+/g, ' | ').slice(0, 160));
+    const wrongPhone = await (await fetch(`${BASE}/api/orders/${orderId}?phone=0900000000`)).status;
+    check('N2 order detail API rejects a wrong phone', wrongPhone === 404, wrongPhone);
+    await page.setViewportSize({ width: 1366, height: 900 });
 
     // ---------- J. Console hygiene ----------
     check('J1 no page errors', pageErrors.length === 0, pageErrors.slice(0, 3));

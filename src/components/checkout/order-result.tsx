@@ -4,6 +4,7 @@ import { buttonClass } from "@/components/ui/button";
 import { ProductThumb } from "@/components/common/product-thumb";
 import { formatDateTime, formatVND } from "@/lib/format";
 import { paymentLabels } from "@/components/checkout/payment-labels";
+import { discountLabel } from "@/lib/pricing";
 import type { Order } from "@/types";
 
 export function OrderResult({ order, orderId }: { order?: Order; orderId?: string }) {
@@ -19,7 +20,10 @@ export function OrderResult({ order, orderId }: { order?: Order; orderId?: strin
               ? "Không tìm thấy đơn hàng này."
               : "Thiếu mã đơn hàng trong đường dẫn."}
           </p>
-          <p>Đơn hàng demo chỉ lưu trong bộ nhớ server, nên sẽ mất khi server khởi động lại.</p>
+          <p>
+            Đơn hàng demo chỉ lưu trong bộ nhớ server nên sẽ mất khi server khởi động lại. Trang này cần đúng mã
+            đơn và số điện thoại đã dùng khi đặt hàng.
+          </p>
           <div className="flex gap-3">
             <Link href="/products" className={buttonClass()}>
               Tiếp tục mua sắm
@@ -90,7 +94,7 @@ export function OrderResult({ order, orderId }: { order?: Order; orderId?: strin
               </div>
               {order.discount > 0 ? (
                 <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
-                  <dt>Giảm giá</dt>
+                  <dt>{discountLabel}</dt>
                   <dd className="font-medium">-{formatVND(order.discount)}</dd>
                 </div>
               ) : null}

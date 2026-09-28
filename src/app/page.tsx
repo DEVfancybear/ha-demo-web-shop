@@ -2,8 +2,8 @@ import Link from "next/link";
 import { BadgeCheck, Headphones, RefreshCcw, Truck } from "lucide-react";
 import { buttonClass } from "@/components/ui/button";
 import { ProductGrid } from "@/components/product/product-grid";
-import { getCategories, getFeaturedProducts } from "@/data/catalog";
-import { formatNumber } from "@/lib/format";
+import { getCategories, getFeaturedProducts, products } from "@/data/catalog";
+import { discountPercent, formatNumber } from "@/lib/format";
 import { siteConfig } from "@/lib/config";
 
 const benefits = [
@@ -16,6 +16,12 @@ const benefits = [
 export default function HomePage() {
   const featured = getFeaturedProducts(8);
   const categories = getCategories();
+  // Số liệu trên hero lấy từ catalog thay vì viết cứng (trước đây ghi 15% và 16 sản phẩm).
+  const bestDiscount = products.reduce(
+    (max, product) => Math.max(max, discountPercent(product.price, product.salePrice)),
+    0,
+  );
+  const averageRating = (products.reduce((sum, product) => sum + product.rating, 0) / products.length).toFixed(1);
 
   return (
     <div className="space-y-14">
@@ -23,13 +29,13 @@ export default function HomePage() {
         <div className="grid gap-8 p-8 lg:grid-cols-2 lg:p-12">
           <div className="space-y-5">
             <span className="inline-flex rounded-full bg-zinc-900 px-3 py-1 text-xs font-semibold text-white dark:bg-white dark:text-zinc-900">
-              Ưu đãi tháng 9 · giảm tới 15%
+              Ưu đãi tháng 9 · giảm tới {bestDiscount}%
             </span>
             <h1 className="text-3xl leading-tight font-bold sm:text-4xl">
               Đồ công nghệ cho mọi nhu cầu, giá minh bạch
             </h1>
             <p className="max-w-lg text-zinc-600 dark:text-zinc-300">
-              {formatNumber(featured.length * 2)} sản phẩm demo thuộc {categories.length} nhóm hàng: điện thoại, laptop,
+              {formatNumber(products.length)} sản phẩm demo thuộc {categories.length} nhóm hàng: điện thoại, laptop,
               tai nghe, đồng hồ và phụ kiện. Đặt hàng thử ngay để trải nghiệm luồng mua sắm hoàn chỉnh.
             </p>
             <div className="flex flex-wrap gap-3">
@@ -43,7 +49,7 @@ export default function HomePage() {
             <dl className="grid grid-cols-3 gap-4 pt-4 text-sm">
               <div>
                 <dt className="text-zinc-500">Sản phẩm</dt>
-                <dd className="text-lg font-semibold">16</dd>
+                <dd className="text-lg font-semibold">{formatNumber(products.length)}</dd>
               </div>
               <div>
                 <dt className="text-zinc-500">Danh mục</dt>
@@ -51,7 +57,7 @@ export default function HomePage() {
               </div>
               <div>
                 <dt className="text-zinc-500">Đánh giá</dt>
-                <dd className="text-lg font-semibold">4.6/5</dd>
+                <dd className="text-lg font-semibold">{averageRating}/5</dd>
               </div>
             </dl>
           </div>

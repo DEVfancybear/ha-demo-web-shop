@@ -12,7 +12,13 @@ import { ProductDetailActions } from "@/components/product/product-detail-action
 import { ProductGrid } from "@/components/product/product-grid";
 import { discountPercent } from "@/lib/format";
 import { siteConfig } from "@/lib/config";
-import { getCategory, getProductBySlug, getRelatedProducts, products } from "@/data/catalog";
+import {
+  getCategory,
+  getProductBySlug,
+  getRelatedProducts,
+  products,
+  withEffectiveStock,
+} from "@/data/catalog";
 
 export function generateStaticParams() {
   return products.map((product) => ({ slug: product.slug }));
@@ -33,11 +39,13 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 export default async function ProductDetailPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const product = getProductBySlug(slug);
-  if (!product) notFound();
+  const found = getProductBySlug(slug);
+  if (!found) notFound();
 
+  // Tồn kho hiện tại (đã trừ các đơn trong phiên chạy) để nút thêm vào giỏ không mời hàng đã hết.
+  const product = withEffectiveStock(found);
   const category = getCategory(product.category);
-  const related = getRelatedProducts(slug);
+  const related = getRelatedProducts(slug).map(withEffectiveStock);
   const discount = discountPercent(product.price, product.salePrice);
 
   return (

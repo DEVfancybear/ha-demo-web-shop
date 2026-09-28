@@ -30,7 +30,17 @@ export type Product = {
   createdAt: string;
 };
 
-export type CartItem = {
+/**
+ * Dòng trong giỏ hàng. Chỉ lưu `productId` + `quantity` để giỏ không thể bị sửa giá:
+ * tên, đơn giá và tồn kho luôn được suy lại từ `src/data/catalog.ts` khi render.
+ */
+export type CartLine = {
+  productId: string;
+  quantity: number;
+};
+
+/** Dòng trong đơn hàng: server chốt tên/đơn giá tại thời điểm đặt. */
+export type OrderItem = {
   productId: string;
   slug: string;
   name: string;
@@ -69,7 +79,7 @@ export type Order = {
   id: string;
   code: string;
   createdAt: string;
-  items: CartItem[];
+  items: OrderItem[];
   subtotal: number;
   shippingFee: number;
   discount: number;

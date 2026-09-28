@@ -2,40 +2,38 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { siteConfig } from "@/lib/config";
-import type { CartItem, Product } from "@/types";
+import { getProductById } from "@/data/catalog";
+import { cartCount, clampQuantity } from "@/lib/cart";
+import type { CartLine, Product } from "@/types";
 
 export type CartState = {
-  items: CartItem[];
-  add: (product: Pick<Product, "id" | "slug" | "name" | "price" | "salePrice" | "emoji" | "tone" | "stock">, quantity?: number) => void;
+  items: CartLine[];
+  add: (product: Pick<Product, "id">, quantity?: number) => void;
   remove: (productId: string) => void;
   setQuantity: (productId: string, quantity: number) => void;
   clear: () => void;
 };
 
-export function lineTotal(item: CartItem) {
-  return item.price * item.quantity;
-}
+/**
+ * Giỏ chỉ lưu `productId` + `quantity` trong localStorage.
+ * Tên, đơn giá và tồn kho luôn suy lại từ `src/data/catalog.ts` khi render
+ * (xem `resolveCartLines`), nên sửa localStorage không đổi được số tiền.
+ */
+export const CART_STORAGE_KEY = "shop-ha-cart";
+export const CART_STORAGE_VERSION = 2;
 
-export function cartSubtotal(items: CartItem[]) {
-  return items.reduce((sum, item) => sum + lineTotal(item), 0);
-}
-
-export function shippingFeeFor(subtotal: number) {
-  if (subtotal === 0) return 0;
-  return subtotal >= siteConfig.freeShippingFrom ? 0 : siteConfig.shippingFee;
-}
-
-export function discountFor(subtotal: number) {
-  if (subtotal >= siteConfig.bulkDiscountFrom) {
-    return Math.round(subtotal * siteConfig.bulkDiscountRate);
+/** localStorage có thể chứa dữ liệu của phiên bản cũ (hoặc bị sửa tay) — chuẩn hoá lại. */
+export function migrateCartState(persisted: unknown): { items: CartLine[] } {
+  const raw = persisted as { items?: unknown } | null | undefined;
+  if (!raw || !Array.isArray(raw.items)) return { items: [] };
+  const items: CartLine[] = [];
+  for (const entry of raw.items) {
+    const line = entry as { productId?: unknown; quantity?: unknown };
+    if (!line || typeof line.productId !== "string" || !line.productId) continue;
+    const quantity = Number(line.quantity);
+    items.push({ productId: line.productId, quantity: Number.isFinite(quantity) ? Math.floor(quantity) : 1 });
   }
-  return 0;
-}
-
-export function cartTotal(items: CartItem[]) {
-  const subtotal = cartSubtotal(items);
-  return subtotal + shippingFeeFor(subtotal) - discountFor(subtotal);
+  return { items };
 }
 
 export const useCartStore = create<CartState>()(
@@ -44,28 +42,19 @@ export const useCartStore = create<CartState>()(
       items: [],
       add: (product, quantity = 1) =>
         set((state) => {
-          const price = product.salePrice ?? product.price;
           const existing = state.items.find((item) => item.productId === product.id);
-          const max = Math.max(1, product.stock);
           if (existing) {
             return {
               items: state.items.map((item) =>
                 item.productId === product.id
-                  ? { ...item, quantity: Math.min(max, item.quantity + quantity) }
+                  ? { ...item, quantity: clampQuantity(product.id, item.quantity + quantity) }
                   : item,
               ),
             };
           }
-          const item: CartItem = {
-            productId: product.id,
-            slug: product.slug,
-            name: product.name,
-            price,
-            emoji: product.emoji,
-            tone: product.tone,
-            quantity: Math.min(max, quantity),
+          return {
+            items: [...state.items, { productId: product.id, quantity: clampQuantity(product.id, quantity) }],
           };
-          return { items: [...state.items, item] };
         }),
       remove: (productId) => set((state) => ({ items: state.items.filter((i) => i.productId !== productId) })),
       setQuantity: (productId, quantity) =>
@@ -73,15 +62,35 @@ export const useCartStore = create<CartState>()(
           items:
             quantity <= 0
               ? state.items.filter((i) => i.productId !== productId)
-              : state.items.map((i) => (i.productId === productId ? { ...i, quantity } : i)),
+              : state.items.map((i) =>
+                  i.productId === productId ? { ...i, quantity: clampQuantity(productId, quantity) } : i,
+                ),
         })),
       clear: () => set({ items: [] }),
     }),
-    { name: "shop-ha-cart", version: 1 },
+    {
+      name: CART_STORAGE_KEY,
+      version: CART_STORAGE_VERSION,
+      migrate: migrateCartState,
+      partialize: (state) => ({ items: state.items }),
+      /**
+       * Khi nạp lại giỏ: bỏ dòng trỏ tới sản phẩm không có trong catalog và kẹp số lượng
+       * theo tồn kho, để dữ liệu cũ/bị sửa tay không đi tiếp vào đơn hàng.
+       */
+      merge: (persisted, current) => ({
+        ...current,
+        items: migrateCartState(persisted)
+          .items.filter((line) => getProductById(line.productId))
+          .map((line) => ({ productId: line.productId, quantity: clampQuantity(line.productId, line.quantity) })),
+      }),
+    },
   ),
 );
 
-/** Số lượng sản phẩm trong giỏ, an toàn với SSR (chưa hydrate trả về 0). */
+/**
+ * Số sản phẩm trong giỏ, đã kẹp theo tồn kho và bỏ dòng không còn hợp lệ.
+ * An toàn với SSR: chưa hydrate thì store trả về mảng rỗng.
+ */
 export function useCartCount() {
-  return useCartStore((state) => state.items.reduce((sum, item) => sum + item.quantity, 0));
+  return useCartStore((state) => cartCount(state.items));
 }

@@ -9,6 +9,7 @@ import { FieldError, Input, Label, Textarea } from "@/components/ui/field";
 import { EmptyState } from "@/components/common/empty-state";
 import { CartTotals } from "@/components/cart/cart-totals";
 import { useCartStore } from "@/stores/cart-store";
+import { resolveCartLines } from "@/lib/cart";
 import { useIsMounted } from "@/lib/use-is-mounted";
 import type { CustomerInfo, PaymentMethod } from "@/types";
 
@@ -44,6 +45,8 @@ export function CheckoutForm() {
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
+  // Chỉ gửi productId + số lượng; giá và tồn kho do server chốt lại từ catalog.
+  const lines = resolveCartLines(items);
   const [form, setForm] = useState<FormState>({
     name: "",
     phone: "",
@@ -56,7 +59,7 @@ export function CheckoutForm() {
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
-  if (mounted && items.length === 0) {
+  if (mounted && lines.length === 0) {
     return (
       <EmptyState
         icon="🧾"
@@ -91,7 +94,10 @@ export function CheckoutForm() {
       const response = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, customer }),
+        body: JSON.stringify({
+          items: lines.map((line) => ({ productId: line.product.id, quantity: line.quantity })),
+          customer,
+        }),
       });
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { message?: string } | null;
@@ -99,7 +105,8 @@ export function CheckoutForm() {
       }
       const order = (await response.json()) as { id: string };
       clear();
-      router.push(`/checkout/success?orderId=${order.id}`);
+      // Kèm SĐT để trang kết quả chỉ hiện đơn cho đúng người đặt.
+      router.push(`/checkout/success?orderId=${order.id}&phone=${encodeURIComponent(customer.phone)}`);
     } catch (error) {
       setServerError(error instanceof Error ? error.message : "Có lỗi không xác định.");
     } finally {
@@ -210,7 +217,7 @@ export function CheckoutForm() {
           <CardTitle>Đơn hàng của bạn</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {mounted ? <CartTotals items={items} showFreeShippingHint={false} /> : null}
+          {mounted ? <CartTotals lines={lines} showFreeShippingHint={false} /> : null}
           {serverError ? (
             <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">
               {serverError}

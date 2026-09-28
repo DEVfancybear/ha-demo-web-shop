@@ -1,5 +1,5 @@
 import { OrderResult } from "@/components/checkout/order-result";
-import { getOrder } from "@/lib/orders";
+import { getOrderForPhone } from "@/lib/orders";
 
 export const metadata = {
   title: "Đặt hàng thành công",
@@ -8,13 +8,15 @@ export const metadata = {
 
 export const dynamic = "force-dynamic";
 
-type SearchParams = Promise<{ orderId?: string | string[] }>;
+type SearchParams = Promise<{ orderId?: string | string[]; phone?: string | string[] }>;
 
 export default async function CheckoutSuccessPage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
-  const raw = params.orderId;
-  const orderId = Array.isArray(raw) ? raw[0] : raw;
-  const order = orderId ? getOrder(orderId) : undefined;
+  const read = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
+  const orderId = read(params.orderId);
+  const phone = read(params.phone);
+  // Chỉ hiện đơn khi đường dẫn kèm đúng SĐT đã đặt, tránh đoán mã đơn để đọc thông tin người khác.
+  const order = orderId && phone ? getOrderForPhone(orderId, phone) : undefined;
 
   return (
     <div>

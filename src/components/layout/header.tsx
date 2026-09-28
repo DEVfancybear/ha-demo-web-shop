@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { Menu, Phone } from "lucide-react";
+import { Phone } from "lucide-react";
 import { siteConfig, mainNav } from "@/lib/config";
 import { CartButton } from "@/components/layout/cart-button";
 import { SearchBar } from "@/components/layout/search-bar";
@@ -47,6 +47,13 @@ export function Header() {
         <CartButton />
       </div>
 
+      {/* Ô tìm kiếm cho mobile: trước đây ô search bị `hidden md:block` nên 390px không có cách tìm. */}
+      <div className="mx-auto max-w-6xl px-4 pb-3 md:hidden">
+        <Suspense fallback={<div className="h-11 rounded-xl bg-zinc-100 dark:bg-zinc-800" />}>
+          <SearchBar />
+        </Suspense>
+      </div>
+
       <div className="mx-auto flex max-w-6xl gap-2 overflow-x-auto px-4 pb-3 text-sm">
         <Link
           href="/products"
@@ -64,9 +71,6 @@ export function Header() {
             {category.name}
           </Link>
         ))}
-        <span className="ml-auto hidden items-center gap-1 text-zinc-400 md:flex">
-          <Menu size={14} /> Dùng menu để lọc theo danh mục
-        </span>
       </div>
     </header>
   );

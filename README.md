@@ -42,8 +42,9 @@ automatically and the code does not use `useMemo`, `useCallback` or `React.memo`
 | Pages | `src/app/**/page.tsx` | App Router; server components for the catalog and the product detail |
 | Mock API | `src/app/api/*/route.ts` | `products`, `products/[slug]`, `categories`, `orders`, `orders/[id]` |
 | Data | `src/data/catalog.ts` | 16 products, 5 categories, filter/sort/pagination helpers |
-| Orders | `src/lib/orders.ts` | In-memory server store; the server recomputes prices, fees and discounts |
-| Cart | `src/stores/cart-store.ts` | Zustand + persist to `localStorage` (key `shop-ha-cart`) |
+| Orders | `src/lib/orders.ts` | In-memory server store; the server recomputes prices, reserves stock and looks orders up by phone |
+| Cart | `src/stores/cart-store.ts` | Zustand + persist to `localStorage` (key `shop-ha-cart`); stores only `productId` + `quantity` |
+| Pricing | `src/lib/pricing.ts` | One source of truth for the subtotal, the shipping fee and the bulk discount (cart + server) |
 | UI | `src/components/**` | shadcn-style: button, card, badge, field, layout, product, cart, checkout |
 
 ## Shopping flow
@@ -52,18 +53,19 @@ automatically and the code does not use `useMemo`, `useCallback` or `React.memo`
 2. `/products` filters by category, brand, max price and keyword, then sorts and paginates (the state lives in the URL).
 3. `/products/[slug]` shows the product detail; choose a quantity and add it to the cart.
 4. `/cart` edits quantities, removes items and shows the subtotal, the shipping fee and the discount.
-5. `/checkout` takes the customer details (validated) and the payment method, then sends `POST /api/orders`.
-6. `/checkout/success?orderId=...` shows the result; `/orders` lists every order created during the current server run.
+5. `/checkout` takes the customer details (validated) and the payment method, then sends `POST /api/orders`; the server checks the remaining stock, reserves it and recomputes every amount.
+6. `/checkout/success?orderId=...&phone=...` shows the result; `/orders` looks orders up by the phone number used at checkout (plus an optional order code) and returns only that phone's orders.
 
 ## Pricing rules
 
 - Free shipping from 500,000₫; below that the fee is 30,000₫.
 - 10% discount on orders from 5,000,000₫.
-- The server recomputes every amount from the prices in `catalog.ts` and checks stock before it creates an order.
+- The server recomputes every amount from the prices in `catalog.ts`, and reserves stock when it creates an order (`409` when the remaining stock is not enough).
+- The cart only keeps `productId` + `quantity`; the name, the unit price and the stock limit are always resolved from `catalog.ts`, so editing `localStorage` cannot change the amount.
 
 ## Tests
 
-The E2E suite (Playwright, running on the machine's built-in Edge) has 76 checks: home page, search, category/brand/price filters, sorting, pagination, product detail, cart, checkout, order list, empty and 404 states, the 390px mobile layout and console logs. Every list assertion is compared against the mock API.
+The E2E suite (Playwright, running on the machine's built-in Edge) has 104 checks: home page, search (including Vietnamese without diacritics and by category name), category/brand/price filters, sorting, pagination (including decimal `page`/`perPage` and `maxPrice=abc`), product detail, cart, cart tampering through `localStorage`, checkout, stock reservation, order lookup by phone, empty and 404 states, the 390px mobile layout (search box, collapsed filters) and console logs. Every list assertion is compared against the mock API.
 
 ```bash
 npm run dev -- --port 3210     # window 1: server
@@ -73,6 +75,7 @@ npm run test:e2e               # window 2: run the tests
 - By default the tests call `http://127.0.0.1:3210`; change it with `BASE_URL=http://localhost:3000 npm run test:e2e`.
 - The dev server allows `127.0.0.1` through `allowedDevOrigins` in `next.config.ts`; Next.js 16 blocks cross-origin dev requests by default, so pages would render without hydrating without that entry.
 - Use `PW_CHANNEL=chrome` if the machine has no Edge.
+- Start the dev server right before the run: the suite creates orders and consumes stock, so the in-memory state of a long-running server makes the stock checks fail (the order-lookup check is unaffected).
 - The script lives in `tests/e2e.cjs`; it prints JSON `{ total, passed, failed, checks }` and exits with code 1 when a check fails.
 
 ## Environment variables
@@ -88,6 +91,7 @@ Optional. See `.env.example` to change the site name or the hotline (the default
 
 - Orders live in server memory only, inside `globalThis.__shopHaOrders` (a Map of the server process), so pages and API routes share the data; restarting the server clears every order.
 - Product images are gradients plus emoji instead of real photos (works offline).
-- No authentication and no real payment.
+- Product detail pages are statically generated, so their stock line can lag behind a long-running server; the server re-validates (and reserves) stock when the order is created.
+- No authentication and no real payment: order lookup only proves ownership of a phone number, and the cart clamps quantities against the catalog stock while the server stays the source of truth.
 
 > The UI text is Vietnamese; only the documentation is bilingual.

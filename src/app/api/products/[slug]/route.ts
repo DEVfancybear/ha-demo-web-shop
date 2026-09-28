@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getProductBySlug, getRelatedProducts } from "@/data/catalog";
+import { getProductBySlug, getRelatedProducts, withEffectiveStock } from "@/data/catalog";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
@@ -9,5 +9,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
     return NextResponse.json({ message: "Không tìm thấy sản phẩm." }, { status: 404 });
   }
 
-  return NextResponse.json({ product, related: getRelatedProducts(slug) });
+  return NextResponse.json({
+    product: withEffectiveStock(product),
+    related: getRelatedProducts(slug).map(withEffectiveStock),
+  });
 }

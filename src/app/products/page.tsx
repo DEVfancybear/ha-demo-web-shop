@@ -4,7 +4,7 @@ import { SortSelect } from "@/components/product/sort-select";
 import { ProductGrid } from "@/components/product/product-grid";
 import { Pagination } from "@/components/product/pagination";
 import { Breadcrumbs } from "@/components/common/breadcrumbs";
-import { filterProducts, getBrands, getCategories, getCategory, priceBounds, sortOptions } from "@/data/catalog";
+import { filterProducts, getBrands, getCategories, getCategory, sortOptions } from "@/data/catalog";
 import type { SortKey } from "@/types";
 
 export const metadata = {
@@ -23,7 +23,6 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
     return Array.isArray(value) ? value[0] : value;
   };
 
-  const bounds = priceBounds();
   const sortParam = read("sort") as SortKey | undefined;
   const sort = sortOptions.some((option) => option.value === sortParam) ? (sortParam as SortKey) : "newest";
   const categorySlug = read("category");
@@ -66,7 +65,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
 
       <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
         <Suspense fallback={<div className="h-96 animate-pulse rounded-2xl bg-zinc-100 dark:bg-zinc-800" />}>
-          <FilterSidebar categories={getCategories()} brands={getBrands()} maxPrice={bounds.max} />
+          <FilterSidebar categories={getCategories()} brands={getBrands()} />
         </Suspense>
 
         <div>

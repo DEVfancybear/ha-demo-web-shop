@@ -1,15 +1,19 @@
 "use client";
 
-import { siteConfig } from "@/lib/config";
 import { formatVND } from "@/lib/format";
-import { cartSubtotal, discountFor, shippingFeeFor } from "@/stores/cart-store";
-import type { CartItem } from "@/types";
+import { siteConfig } from "@/lib/config";
+import { discountLabel, totalsFor } from "@/lib/pricing";
+import { pricedLines, type ResolvedCartLine } from "@/lib/cart";
 
-export function CartTotals({ items, showFreeShippingHint = true }: { items: CartItem[]; showFreeShippingHint?: boolean }) {
-  const subtotal = cartSubtotal(items);
-  const shipping = shippingFeeFor(subtotal);
-  const discount = discountFor(subtotal);
-  const total = subtotal + shipping - discount;
+/** Bảng tiền dùng chung một nguồn luật với server (`src/lib/pricing.ts`). */
+export function CartTotals({
+  lines,
+  showFreeShippingHint = true,
+}: {
+  lines: ResolvedCartLine[];
+  showFreeShippingHint?: boolean;
+}) {
+  const { subtotal, shippingFee, discount, total } = totalsFor(pricedLines(lines));
 
   return (
     <dl className="space-y-3 text-sm">
@@ -19,11 +23,11 @@ export function CartTotals({ items, showFreeShippingHint = true }: { items: Cart
       </div>
       <div className="flex justify-between">
         <dt className="text-zinc-600 dark:text-zinc-300">Phí vận chuyển</dt>
-        <dd className="font-medium">{shipping === 0 ? "Miễn phí" : formatVND(shipping)}</dd>
+        <dd className="font-medium">{shippingFee === 0 ? "Miễn phí" : formatVND(shippingFee)}</dd>
       </div>
       {discount > 0 ? (
         <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
-          <dt>Giảm giá đơn lớn ({Math.round(siteConfig.bulkDiscountRate * 100)}%)</dt>
+          <dt>{discountLabel}</dt>
           <dd className="font-medium">-{formatVND(discount)}</dd>
         </div>
       ) : null}
@@ -31,16 +35,11 @@ export function CartTotals({ items, showFreeShippingHint = true }: { items: Cart
         <dt className="font-semibold">Tổng cộng</dt>
         <dd className="font-bold">{formatVND(total)}</dd>
       </div>
-      {showFreeShippingHint && shipping > 0 ? (
+      {showFreeShippingHint && shippingFee > 0 ? (
         <p className="rounded-xl bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
           Mua thêm {formatVND(siteConfig.freeShippingFrom - subtotal)} để được miễn phí vận chuyển.
         </p>
       ) : null}
     </dl>
   );
-}
-
-export function cartTotalValue(items: CartItem[]) {
-  const subtotal = cartSubtotal(items);
-  return subtotal + shippingFeeFor(subtotal) - discountFor(subtotal);
 }

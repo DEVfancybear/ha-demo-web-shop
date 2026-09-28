@@ -163,6 +163,43 @@ export function getProductBySlug(slug: string): Product | undefined {
   return products.find((p) => p.slug === slug);
 }
 
+export function getProductById(id: string): Product | undefined {
+  return products.find((p) => p.id === id);
+}
+
+/**
+ * Tồn kho hiệu lực sau khi trừ các đơn đã tạo. Next có thể tạo nhiều module graph
+ * (page vs route handler) nên phần đã trừ phải nằm trên globalThis — cùng cách với
+ * `__shopHaOrders` trong `src/lib/orders.ts`.
+ */
+const globalStock = globalThis as typeof globalThis & { __shopHaStock?: Map<string, number> };
+const stockOverrides = (globalStock.__shopHaStock ??= new Map<string, number>());
+
+export function stockOf(product: Pick<Product, "id" | "stock">): number {
+  return stockOverrides.get(product.id) ?? product.stock;
+}
+
+/** Bản sao của sản phẩm với tồn kho hiện tại (dùng cho API và trang danh mục). */
+export function withEffectiveStock(product: Product): Product {
+  return { ...product, stock: stockOf(product) };
+}
+
+/** Giữ chỗ tồn kho; trả `false` nếu không đủ hàng. */
+export function reserveStock(productId: string, quantity: number): boolean {
+  const product = getProductById(productId);
+  if (!product || !Number.isInteger(quantity) || quantity < 1) return false;
+  const available = stockOf(product);
+  if (quantity > available) return false;
+  stockOverrides.set(productId, available - quantity);
+  return true;
+}
+
+export function releaseStock(productId: string, quantity: number) {
+  const product = getProductById(productId);
+  if (!product) return;
+  stockOverrides.set(productId, stockOf(product) + quantity);
+}
+
 export function getFeaturedProducts(limit = 8): Product[] {
   const featured = products.filter((p) => p.featured);
   const rest = products.filter((p) => !p.featured);
@@ -177,16 +214,36 @@ export function getRelatedProducts(slug: string, limit = 4): Product[] {
   return [...sameCategory, ...others].slice(0, limit);
 }
 
+/**
+ * Chuẩn hoá từ khoá tìm kiếm: bỏ dấu tiếng Việt, đổi `đ` thành `d`, viết thường.
+ * Nhờ vậy "điện thoại", "dien thoai" và "ĐIỆN THOẠI" cho cùng kết quả.
+ */
+export function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    // `đ` không tách được bằng NFD nên phải thay riêng, và phải thay sau khi viết thường
+    // để "Đ" cũng thành "d".
+    .replace(/đ/g, "d")
+    .trim();
+}
+
 export function filterProducts(query: ProductQuery = {}) {
   const { q, category, brand, sort = "newest", maxPrice, page = 1, perPage = 8 } = query;
-  const keyword = q?.trim().toLowerCase();
+  const keyword = q ? normalizeSearchText(q) : "";
+  // Cùng dải giá với thanh trượt để nhãn trên UI và danh sách trả về không lệch nhau.
+  const effectiveMaxPrice = maxPrice && Number.isFinite(maxPrice) ? clampMaxPrice(maxPrice) : undefined;
 
   let items = products.filter((p) => {
     if (category && p.category !== category) return false;
     if (brand && p.brand !== brand) return false;
-    if (maxPrice && (p.salePrice ?? p.price) > maxPrice) return false;
+    if (effectiveMaxPrice && (p.salePrice ?? p.price) > effectiveMaxPrice) return false;
     if (keyword) {
-      const haystack = [p.name, p.brand, p.description, p.category].join(" ").toLowerCase();
+      // Tìm cả theo tên danh mục (trước đây chỉ có slug `dien-thoai` trong haystack).
+      const haystack = normalizeSearchText(
+        [p.name, p.brand, p.description, p.category, getCategory(p.category)?.name ?? ""].join(" "),
+      );
       if (!haystack.includes(keyword)) return false;
     }
     return true;
@@ -194,16 +251,18 @@ export function filterProducts(query: ProductQuery = {}) {
 
   items = [...items].sort(sorters[sort]);
 
+  // `page`/`perPage` phải là số nguyên: trước đây `?perPage=0.5` cho totalPages 32 nhưng 0 item.
+  const safePerPage = Math.max(1, Math.floor(perPage) || 1);
   const total = items.length;
-  const totalPages = Math.max(1, Math.ceil(total / perPage));
-  const safePage = Math.min(Math.max(1, page), totalPages);
-  const start = (safePage - 1) * perPage;
+  const totalPages = Math.max(1, Math.ceil(total / safePerPage));
+  const safePage = Math.min(Math.max(1, Math.floor(page) || 1), totalPages);
+  const start = (safePage - 1) * safePerPage;
 
   return {
-    items: items.slice(start, start + perPage),
+    items: items.slice(start, start + safePerPage).map(withEffectiveStock),
     total,
     page: safePage,
-    perPage,
+    perPage: safePerPage,
     totalPages,
     brands: Array.from(new Set(items.map((p) => p.brand))).sort((a, b) => a.localeCompare(b, "vi")),
   };
@@ -212,6 +271,25 @@ export function filterProducts(query: ProductQuery = {}) {
 export function priceBounds() {
   const values = products.map((p) => p.salePrice ?? p.price);
   return { min: Math.min(...values), max: Math.max(...values) };
+}
+
+/** Bước giá và mốc nhỏ nhất của thanh trượt lọc giá — dùng chung cho UI và API. */
+export const PRICE_STEP = 500_000;
+export const PRICE_MIN = 1_000_000;
+
+/** Mốc cao nhất của thanh trượt: làm tròn xuống theo bước giá để `input.value` luôn hợp lệ. */
+export function priceSliderMax() {
+  return Math.max(PRICE_STEP, Math.floor(priceBounds().max / PRICE_STEP) * PRICE_STEP);
+}
+
+/**
+ * Kẹp `maxPrice` vào đúng dải của thanh trượt và làm tròn xuống theo bước giá:
+ * `?maxPrice=100` thành 1.000.000, `?maxPrice=1234567` thành 1.000.000 — nhờ vậy
+ * `input[type=range]` không tự kẹp giá trị và nhãn "Dưới …₫" luôn khớp `input.value`.
+ */
+export function clampMaxPrice(value: number) {
+  const clamped = Math.min(Math.max(value, PRICE_MIN), priceSliderMax());
+  return Math.floor((clamped - PRICE_MIN) / PRICE_STEP) * PRICE_STEP + PRICE_MIN;
 }
 
 export const sortOptions: { value: SortKey; label: string }[] = [
