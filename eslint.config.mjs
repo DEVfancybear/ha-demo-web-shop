@@ -13,6 +13,9 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // This project lints the app only; the Playwright script is plain Node CJS.
     "tests/**",
+    // Thư mục tạm khi chạy thử/E2E (database, script nháp) — không thuộc mã nguồn.
+    ".tmp/**",
+    ".data/**",
   ]),
 ]);
 

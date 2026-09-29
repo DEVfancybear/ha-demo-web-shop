@@ -6,6 +6,7 @@ import { Button, buttonClass } from "@/components/ui/button";
 import { EmptyState } from "@/components/common/empty-state";
 import { CartLineItem } from "@/components/cart/cart-line-item";
 import { CartTotals } from "@/components/cart/cart-totals";
+import { VoucherForm } from "@/components/cart/voucher-form";
 import { useCartStore } from "@/stores/cart-store";
 import { resolveCartLines } from "@/lib/cart";
 import { useIsMounted } from "@/lib/use-is-mounted";
@@ -59,7 +60,7 @@ export function CartView() {
           ) : null}
           <ul>
             {lines.map((line) => (
-              <CartLineItem key={line.product.id} product={line.product} quantity={line.quantity} />
+              <CartLineItem key={line.variant.id} line={line} />
             ))}
           </ul>
         </CardContent>
@@ -70,6 +71,7 @@ export function CartView() {
           <CardTitle>Thanh toán</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          <VoucherForm lines={lines} />
           <CartTotals lines={lines} />
           <Link href="/checkout" className={buttonClass({ size: "lg", className: "w-full" })}>
             Tiến hành đặt hàng

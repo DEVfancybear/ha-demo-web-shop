@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { buttonClass } from "@/components/ui/button";
 import { ProductThumb } from "@/components/common/product-thumb";
 import { formatDateTime, formatVND } from "@/lib/format";
 import { paymentLabels } from "@/components/checkout/payment-labels";
-import { discountLabel } from "@/lib/pricing";
+import { bulkDiscountLabel } from "@/lib/pricing";
+import { statusLabels, statusTones } from "@/lib/order-status";
 import type { Order } from "@/types";
 
 export function OrderResult({ order, orderId }: { order?: Order; orderId?: string }) {
@@ -21,7 +23,7 @@ export function OrderResult({ order, orderId }: { order?: Order; orderId?: strin
               : "Thiếu mã đơn hàng trong đường dẫn."}
           </p>
           <p>
-            Đơn hàng demo chỉ lưu trong bộ nhớ server nên sẽ mất khi server khởi động lại. Trang này cần đúng mã
+            Đơn hàng được lưu trong SQLite trên server nên vẫn còn sau khi khởi động lại. Trang này cần đúng mã
             đơn và số điện thoại đã dùng khi đặt hàng.
           </p>
           <div className="flex gap-3">
@@ -41,8 +43,9 @@ export function OrderResult({ order, orderId }: { order?: Order; orderId?: strin
     <div className="space-y-6">
       <Card className="border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          <CardTitle className="flex flex-wrap items-center gap-2">
             <span aria-hidden>✅</span> Đặt hàng thành công
+            <Badge tone={statusTones[order.status]}>{statusLabels[order.status]}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-emerald-900 dark:text-emerald-100">
@@ -59,12 +62,15 @@ export function OrderResult({ order, orderId }: { order?: Order; orderId?: strin
           <CardContent>
             <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {order.items.map((item) => (
-                <li key={item.productId} className="flex items-center gap-3 py-3">
+                <li key={`${item.productId}-${item.variantId}`} className="flex items-center gap-3 py-3">
                   <ProductThumb emoji={item.emoji} tone={item.tone} className="h-14 w-14 rounded-xl text-2xl" />
                   <div className="flex-1">
                     <Link href={`/products/${item.slug}`} className="text-sm font-medium hover:underline">
                       {item.name}
                     </Link>
+                    {item.variantLabel ? (
+                      <p className="text-xs text-zinc-500">Phân loại: {item.variantLabel}</p>
+                    ) : null}
                     <p className="text-xs text-zinc-500">
                       {item.quantity} × {formatVND(item.price)}
                     </p>
@@ -92,10 +98,16 @@ export function OrderResult({ order, orderId }: { order?: Order; orderId?: strin
                   {order.shippingFee === 0 ? "Miễn phí" : formatVND(order.shippingFee)}
                 </dd>
               </div>
-              {order.discount > 0 ? (
+              {order.bulkDiscount > 0 ? (
                 <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
-                  <dt>{discountLabel}</dt>
-                  <dd className="font-medium">-{formatVND(order.discount)}</dd>
+                  <dt>{bulkDiscountLabel}</dt>
+                  <dd className="font-medium">-{formatVND(order.bulkDiscount)}</dd>
+                </div>
+              ) : null}
+              {order.voucherDiscount > 0 ? (
+                <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
+                  <dt>Mã giảm giá {order.voucherCode}</dt>
+                  <dd className="font-medium">-{formatVND(order.voucherDiscount)}</dd>
                 </div>
               ) : null}
               <div className="flex justify-between border-t border-zinc-200 pt-3 text-base dark:border-zinc-800">
@@ -112,6 +124,13 @@ export function OrderResult({ order, orderId }: { order?: Order; orderId?: strin
               {order.customer.note ? <p className="mt-1 italic">Ghi chú: {order.customer.note}</p> : null}
             </div>
 
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              Cập nhật lần cuối: {formatDateTime(order.updatedAt)}
+            </p>
+
+            <Link href="/orders" className={buttonClass({ variant: "outline", className: "w-full" })}>
+              Theo dõi trạng thái
+            </Link>
             <Link href="/products" className={buttonClass({ className: "w-full" })}>
               Tiếp tục mua sắm
             </Link>

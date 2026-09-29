@@ -1,14 +1,23 @@
-import { getProductById, stockOf } from "@/data/catalog";
+import { findVariant, getProductById, products, variantStockOf } from "@/data/catalog";
 import { finalPrice } from "@/lib/format";
-import type { CartLine, Product } from "@/types";
+import type { CartLine, Product, Variant } from "@/types";
 
-export type ResolvedCartLine = { product: Product; quantity: number };
+export type ResolvedCartLine = { product: Product; variant: Variant; quantity: number };
 
-/** Số lượng hợp lệ cho một sản phẩm: số nguyên trong khoảng 1..tồn kho. */
-export function clampQuantity(productId: string, quantity: number): number {
-  const product = getProductById(productId);
-  if (!product) return 1;
-  const max = Math.max(1, stockOf(product));
+/** Tìm biến thể theo id trên toàn catalog (id đã bao gồm id sản phẩm). */
+export function findVariantById(variantId: string): { product: Product; variant: Variant } | undefined {
+  for (const product of products) {
+    const variant = findVariant(product, variantId);
+    if (variant) return { product, variant };
+  }
+  return undefined;
+}
+
+/** Số lượng hợp lệ cho một biến thể: số nguyên trong khoảng 1..tồn kho của biến thể. */
+export function clampQuantity(variantId: string, quantity: number): number {
+  const found = findVariantById(variantId);
+  if (!found) return 1;
+  const max = Math.max(1, variantStockOf(found.variant));
   const safe = Number.isFinite(quantity) ? Math.floor(quantity) : 1;
   return Math.min(Math.max(1, safe || 1), max);
 }
@@ -19,18 +28,22 @@ export function priceOf(product: Product) {
 
 /**
  * Suy tên/đơn giá/tồn kho từ catalog khi render:
- * - dòng trỏ tới sản phẩm không tồn tại hoặc đã hết hàng bị bỏ,
- * - dòng vượt tồn kho bị kẹp về đúng tồn kho.
+ * - dòng trỏ tới sản phẩm/biến thể không tồn tại hoặc đã hết hàng bị bỏ,
+ * - dòng vượt tồn kho bị kẹp về đúng tồn kho của biến thể,
+ * - hai dòng cùng biến thể được gộp lại.
  */
 export function resolveCartLines(lines: CartLine[]): ResolvedCartLine[] {
-  const resolved: ResolvedCartLine[] = [];
+  const byVariant = new Map<string, ResolvedCartLine>();
   for (const line of lines) {
-    const product = getProductById(line.productId);
+    const product = getProductById(line.productId) ?? findVariantById(line.variantId)?.product;
     if (!product) continue;
-    if (stockOf(product) < 1) continue;
-    resolved.push({ product, quantity: clampQuantity(product.id, line.quantity) });
+    const variant = findVariant(product, line.variantId);
+    if (!variant || variantStockOf(variant) < 1) continue;
+    const existing = byVariant.get(variant.id);
+    const quantity = clampQuantity(variant.id, (existing?.quantity ?? 0) + line.quantity);
+    byVariant.set(variant.id, { product, variant, quantity });
   }
-  return resolved;
+  return Array.from(byVariant.values());
 }
 
 export function pricedLines(lines: ResolvedCartLine[]) {

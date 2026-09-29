@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { ShoppingCart } from "lucide-react";
 import { useCartCount } from "@/stores/cart-store";
@@ -9,6 +10,11 @@ import { cn } from "@/lib/utils";
 export function CartButton({ className }: { className?: string }) {
   const count = useCartCount();
   const mounted = useIsMounted();
+
+  // Dấu hiệu "app đã hydrate xong" cho test E2E (tests/e2e.cjs) — không ảnh hưởng giao diện.
+  useEffect(() => {
+    document.documentElement.dataset.hydrated = "true";
+  }, []);
 
   return (
     <Link

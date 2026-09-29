@@ -10,8 +10,12 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProductDetailActions } from "@/components/product/product-detail-actions";
 import { ProductGrid } from "@/components/product/product-grid";
+import { ProductReviews } from "@/components/product/product-reviews";
+import { JsonLd } from "@/components/seo/json-ld";
 import { discountPercent } from "@/lib/format";
 import { siteConfig } from "@/lib/config";
+import { breadcrumbJsonLd, productJsonLd, productPath } from "@/lib/seo";
+import { syncStockFromDb } from "@/lib/stock";
 import {
   getCategory,
   getProductBySlug,
@@ -31,25 +35,52 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const { slug } = await params;
   const product = getProductBySlug(slug);
   if (!product) return { title: "Không tìm thấy sản phẩm" };
+
+  const url = productPath(product);
+  const image = `${url}/opengraph-image`;
   return {
     title: product.name,
     description: product.description,
+    alternates: { canonical: url },
+    openGraph: {
+      type: "website",
+      title: `${product.name} — ${product.brand}`,
+      description: product.description,
+      url,
+      images: [{ url: image, width: 1200, height: 630, alt: product.name }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: product.name,
+      description: product.description,
+      images: [image],
+    },
   };
 }
 
 export default async function ProductDetailPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
+  // Tồn kho thật nằm trong SQLite: nạp lại cache trước khi dựng trang.
+  syncStockFromDb();
   const found = getProductBySlug(slug);
   if (!found) notFound();
 
-  // Tồn kho hiện tại (đã trừ các đơn trong phiên chạy) để nút thêm vào giỏ không mời hàng đã hết.
+  // Tồn kho hiện tại (đã trừ các đơn đã đặt) để nút thêm vào giỏ không mời hàng đã hết.
   const product = withEffectiveStock(found);
   const category = getCategory(product.category);
   const related = getRelatedProducts(slug).map(withEffectiveStock);
   const discount = discountPercent(product.price, product.salePrice);
+  const breadcrumbItems = [
+    { name: "Trang chủ", path: "/" },
+    { name: "Sản phẩm", path: "/products" },
+    ...(category ? [{ name: category.name, path: `/products?category=${category.slug}` }] : []),
+    { name: product.name, path: productPath(product) },
+  ];
 
   return (
     <div>
+      <JsonLd id="product-json-ld" data={productJsonLd(product, category?.name)} />
+      <JsonLd id="breadcrumb-json-ld" data={breadcrumbJsonLd(breadcrumbItems)} />
       <Breadcrumbs
         items={[
           { href: "/", label: "Trang chủ" },
@@ -128,6 +159,13 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
           </Card>
         </div>
       </div>
+
+      <section className="mt-14" aria-labelledby="danh-gia">
+        <h2 id="danh-gia" className="mb-5 text-xl font-bold">
+          Đánh giá sản phẩm
+        </h2>
+        <ProductReviews slug={product.slug} fallbackRating={product.rating} fallbackCount={product.reviewCount} />
+      </section>
 
       <section className="mt-14" aria-labelledby="tuong-tu">
         <div className="mb-5 flex items-end justify-between">

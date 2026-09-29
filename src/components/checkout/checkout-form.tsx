@@ -40,12 +40,14 @@ function validate(form: FormState) {
 export function CheckoutForm() {
   const items = useCartStore((state) => state.items);
   const clear = useCartStore((state) => state.clear);
+  const voucherCode = useCartStore((state) => state.voucherCode);
+  const setVoucher = useCartStore((state) => state.setVoucher);
   const router = useRouter();
   const mounted = useIsMounted();
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
-  // Chỉ gửi productId + số lượng; giá và tồn kho do server chốt lại từ catalog.
+  // Chỉ gửi productId + variantId + số lượng; giá, tồn kho và mức giảm do server chốt lại từ catalog.
   const lines = resolveCartLines(items);
   const [form, setForm] = useState<FormState>({
     name: "",
@@ -95,12 +97,21 @@ export function CheckoutForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: lines.map((line) => ({ productId: line.product.id, quantity: line.quantity })),
+          items: lines.map((line) => ({
+            productId: line.product.id,
+            variantId: line.variant.id,
+            quantity: line.quantity,
+          })),
           customer,
+          voucherCode: voucherCode ?? undefined,
         }),
       });
       if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+        const payload = (await response.json().catch(() => null)) as
+          | { message?: string; voucherInvalid?: boolean }
+          | null;
+        // Mã không còn hợp lệ (giỏ đổi, thiếu giá trị tối thiểu…) thì bỏ luôn để lần sau đặt được ngay.
+        if (payload?.voucherInvalid) setVoucher(null);
         throw new Error(payload?.message ?? "Không tạo được đơn hàng.");
       }
       const order = (await response.json()) as { id: string };
@@ -227,7 +238,8 @@ export function CheckoutForm() {
             {submitting ? "Đang đặt hàng..." : "Đặt hàng"}
           </Button>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Đây là cửa hàng demo: đơn hàng chỉ được lưu trong bộ nhớ của server, không phát sinh giao dịch thật.
+            Đây là cửa hàng demo: đơn hàng được lưu trong SQLite trên server (xem `SHOP_DB_PATH` trong README),
+            không phát sinh giao dịch thật.
           </p>
         </CardContent>
       </Card>

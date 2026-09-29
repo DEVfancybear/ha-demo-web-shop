@@ -40,3 +40,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# dữ liệu demo (SQLite + file tạm khi chạy test)
+/.data/
+/.tmp/

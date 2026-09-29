@@ -7,6 +7,17 @@ export type Category = {
 
 export type Spec = { label: string; value: string };
 
+/**
+ * Biến thể của sản phẩm (màu/kích cỡ hoặc phiên bản). Tồn kho được quản lý theo biến thể:
+ * `src/data/catalog.ts` chỉ là số gốc, server giữ số thật sau mỗi đơn.
+ */
+export type Variant = {
+  id: string;
+  color: string;
+  size: string;
+  stock: number;
+};
+
 export type Product = {
   id: string;
   slug: string;
@@ -19,7 +30,9 @@ export type Product = {
   salePrice?: number;
   rating: number;
   reviewCount: number;
+  /** Tổng tồn kho, luôn bằng tổng `stock` của các biến thể */
   stock: number;
+  variants: Variant[];
   description: string;
   highlights: string[];
   specs: Spec[];
@@ -31,17 +44,21 @@ export type Product = {
 };
 
 /**
- * Dòng trong giỏ hàng. Chỉ lưu `productId` + `quantity` để giỏ không thể bị sửa giá:
+ * Dòng trong giỏ hàng. Chỉ lưu `productId` + `variantId` + `quantity` để giỏ không thể bị sửa giá:
  * tên, đơn giá và tồn kho luôn được suy lại từ `src/data/catalog.ts` khi render.
  */
 export type CartLine = {
   productId: string;
+  variantId: string;
   quantity: number;
 };
 
-/** Dòng trong đơn hàng: server chốt tên/đơn giá tại thời điểm đặt. */
+/** Dòng trong đơn hàng: server chốt tên/đơn giá/biến thể tại thời điểm đặt. */
 export type OrderItem = {
   productId: string;
+  variantId: string;
+  /** Nhãn biến thể tại thời điểm đặt, ví dụ "Đen · 256GB" */
+  variantLabel: string;
   slug: string;
   name: string;
   price: number;
@@ -75,15 +92,60 @@ export type CustomerInfo = {
 
 export type OrderStatus = "pending" | "confirmed" | "shipping" | "done";
 
+/** Loại mã giảm giá: theo phần trăm, theo số tiền, hoặc giảm đúng phí vận chuyển. */
+export type VoucherKind = "percent" | "amount" | "shipping";
+
+export type Voucher = {
+  code: string;
+  label: string;
+  kind: VoucherKind;
+  /** Phần trăm (0..1) hoặc số tiền, tuỳ `kind`; bỏ qua với `shipping`. */
+  value: number;
+  /** Giá trị tối thiểu của tạm tính để mã có hiệu lực. */
+  minSubtotal: number;
+  /** Mức giảm tối đa (dùng cho mã phần trăm). */
+  maxDiscount?: number;
+};
+
 export type Order = {
   id: string;
   code: string;
   createdAt: string;
+  updatedAt: string;
   items: OrderItem[];
   subtotal: number;
   shippingFee: number;
+  /** Giảm giá đơn lớn theo luật chung (10% từ 5 triệu). */
+  bulkDiscount: number;
+  voucherCode?: string;
+  voucherDiscount: number;
+  /** Tổng giảm giá = bulkDiscount + voucherDiscount. */
   discount: number;
   total: number;
   customer: CustomerInfo;
   status: OrderStatus;
+};
+
+export type Review = {
+  id: string;
+  productId: string;
+  author: string;
+  rating: number;
+  title?: string;
+  body: string;
+  createdAt: string;
+};
+
+export type ReviewInput = {
+  author: string;
+  rating: number;
+  title?: string;
+  body: string;
+};
+
+/** Điểm đánh giá tổng hợp: số cứng trong catalog + đánh giá thật đã lưu. */
+export type ReviewSummary = {
+  count: number;
+  average: number;
+  stored: number;
 };

@@ -8,24 +8,20 @@ import { EmptyState } from "@/components/common/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Input, Label } from "@/components/ui/field";
 import { formatDateTime, formatVND } from "@/lib/format";
-import type { Order, OrderStatus } from "@/types";
-
-const statusLabels: Record<OrderStatus, { label: string; tone: "warning" | "outline" | "success" }> = {
-  pending: { label: "Chờ xác nhận", tone: "warning" },
-  confirmed: { label: "Đã xác nhận", tone: "outline" },
-  shipping: { label: "Đang giao", tone: "outline" },
-  done: { label: "Hoàn tất", tone: "success" },
-};
+import { nextStatusOf, statusLabels, statusTones } from "@/lib/order-status";
+import type { Order } from "@/types";
 
 /**
  * Tra cứu đơn theo số điện thoại đã đặt (demo chưa có tài khoản).
- * Trước đây trang này gọi `GET /api/orders` và hiển thị tên + địa chỉ của mọi khách.
+ * Danh sách chỉ hiện đơn khớp số điện thoại, và chủ đơn có thể tự đẩy trạng thái
+ * đi một bước qua `PATCH /api/orders/[id]`.
  */
 export function OrderLookup() {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -45,6 +41,31 @@ export function OrderLookup() {
       setOrders([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const advance = async (order: Order) => {
+    const next = nextStatusOf(order.status);
+    if (!next) return;
+
+    setBusyId(order.id);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/orders/${order.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        // Chỉ chủ đơn biết số điện thoại mới đổi được trạng thái.
+        body: JSON.stringify({ phone: order.customer.phone, status: next }),
+      });
+      const payload = (await response.json().catch(() => null)) as (Order & { message?: string }) | null;
+      if (!response.ok || !payload) {
+        throw new Error(payload?.message ?? "Không cập nhật được trạng thái đơn.");
+      }
+      setOrders((current) => current?.map((item) => (item.id === order.id ? payload : item)) ?? null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Có lỗi không xác định.");
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -102,7 +123,7 @@ export function OrderLookup() {
       {orders && orders.length > 0 ? (
         <ul className="space-y-4">
           {orders.map((order) => {
-            const status = statusLabels[order.status] ?? statusLabels.pending;
+            const next = nextStatusOf(order.status);
             return (
               <li key={order.id}>
                 <Card>
@@ -110,20 +131,47 @@ export function OrderLookup() {
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <p className="font-semibold">{order.code}</p>
-                        <Badge tone={status.tone}>{status.label}</Badge>
+                        <Badge tone={statusTones[order.status]}>{statusLabels[order.status]}</Badge>
                       </div>
                       <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
                         {formatDateTime(order.createdAt)} · {order.items.length} sản phẩm · giao tới {order.customer.name}
                       </p>
+                      <ul className="mt-2 space-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                        {order.items.map((item) => (
+                          <li key={`${item.productId}-${item.variantId}`}>
+                            {item.quantity} × {item.name}
+                            {item.variantLabel ? ` (${item.variantLabel})` : ""}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-                    <div className="text-right">
+                    <div className="flex flex-col items-start gap-2 sm:items-end">
                       <p className="text-lg font-bold">{formatVND(order.total)}</p>
-                      <Link
-                        href={`/checkout/success?orderId=${order.id}&phone=${encodeURIComponent(order.customer.phone)}`}
-                        className="text-sm font-medium text-blue-600 hover:underline"
-                      >
-                        Xem chi tiết
-                      </Link>
+                      {order.voucherDiscount > 0 ? (
+                        <p className="text-xs text-emerald-700 dark:text-emerald-400">
+                          Đã dùng mã {order.voucherCode}
+                        </p>
+                      ) : null}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {next ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => advance(order)}
+                            disabled={busyId === order.id}
+                          >
+                            {busyId === order.id ? "Đang cập nhật..." : `Chuyển sang "${statusLabels[next]}"`}
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-zinc-500 dark:text-zinc-400">Đơn đã hoàn tất</span>
+                        )}
+                        <Link
+                          href={`/checkout/success?orderId=${order.id}&phone=${encodeURIComponent(order.customer.phone)}`}
+                          className="text-sm font-medium text-blue-600 hover:underline"
+                        >
+                          Xem chi tiết
+                        </Link>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

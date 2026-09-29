@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { filterProducts } from "@/data/catalog";
+import { syncStockFromDb } from "@/lib/stock";
 import type { SortKey } from "@/types";
 
 const allowedSorts: SortKey[] = ["newest", "price-asc", "price-desc", "rating", "name"];
 
 export function GET(request: Request) {
+  // Tồn kho thật nằm trong SQLite; nạp lại cache trước khi lọc/trả dữ liệu.
+  syncStockFromDb();
   const { searchParams } = new URL(request.url);
   const sortParam = searchParams.get("sort") as SortKey | null;
   const pageParam = Number(searchParams.get("page") ?? "1");

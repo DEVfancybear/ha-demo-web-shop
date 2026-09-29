@@ -5,11 +5,13 @@ import { ProductGrid } from "@/components/product/product-grid";
 import { Pagination } from "@/components/product/pagination";
 import { Breadcrumbs } from "@/components/common/breadcrumbs";
 import { filterProducts, getBrands, getCategories, getCategory, sortOptions } from "@/data/catalog";
+import { syncStockFromDb } from "@/lib/stock";
 import type { SortKey } from "@/types";
 
 export const metadata = {
   title: "Tất cả sản phẩm",
   description: "Lọc theo danh mục, thương hiệu, khoảng giá và sắp xếp sản phẩm.",
+  alternates: { canonical: "/products" },
 };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -17,6 +19,8 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 const PER_PAGE = 8;
 
 export default async function ProductsPage({ searchParams }: { searchParams: SearchParams }) {
+  // Tồn kho thật nằm trong SQLite: nạp lại cache trước khi lọc.
+  syncStockFromDb();
   const params = await searchParams;
   const read = (key: string) => {
     const value = params[key];

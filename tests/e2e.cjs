@@ -27,8 +27,25 @@ async function apiProducts(params) {
 async function titles(page) {
   return page.$$eval('article h3', (els) => els.map((e) => e.textContent.trim().replace(/\s+/g, ' ')));
 }
+/** Nhãn biến thể giống `variantLabel()` trong src/data/catalog.ts. */
+function variantLabelOf(variant) {
+  return [variant.color, variant.size].filter(Boolean).join(' · ');
+}
+
 async function waitCards(page) {
   await page.waitForSelector('article', { timeout: 20000 });
+}
+/**
+ * Next hydrate sau khi HTML đã hiện, nên click sớm có thể bị "rơi" mất (không có handler).
+ * CartButton đặt `data-hydrated` khi đã mount — chờ dấu hiệu đó trước khi tương tác.
+ */
+async function waitHydrated(page) {
+  await page.waitForSelector('html[data-hydrated="true"]', { timeout: 30000 });
+}
+async function openPage(page, url) {
+  const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await waitHydrated(page);
+  return response;
 }
 async function totalRow(page, label) {
   const row = page.locator('dl > div', { hasText: label }).first();
@@ -61,7 +78,7 @@ async function cartState(page) {
 
   try {
     // ---------- A. Home ----------
-    const homeResp = await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+    const homeResp = await openPage(page, BASE + '/');
     check('A1 home HTTP 200', homeResp.status() === 200, homeResp.status());
     await waitCards(page);
     const homeTitles = await titles(page);
@@ -100,7 +117,7 @@ async function cartState(page) {
     // B5: tìm tiếng Việt phải bỏ dấu và khớp cả tên danh mục ("điện thoại" -> 3 máy).
     for (const query of ['điện thoại', 'dien thoai', 'ĐIỆN THOẠI']) {
       const apiVi = await apiProducts({ q: query, perPage: 50 });
-      await page.goto(`${BASE}/products?q=${encodeURIComponent(query)}`, { waitUntil: 'domcontentloaded' });
+      await openPage(page, `${BASE}/products?q=${encodeURIComponent(query)}`);
       await waitCards(page);
       const domVi = await titles(page);
       check(`B5 search "${query}" finds the 3 phones`, apiVi.total === 3 && domVi.length === 3,
@@ -109,7 +126,7 @@ async function cartState(page) {
 
     // ---------- C. Filters & sorting ----------
     // Reset search first: category change keeps ?q=, so we start from the full list.
-    await page.goto(BASE + '/products', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/products');
     await waitCards(page);
     check('C0 products page lists all categories', (await titles(page)).length === 8, (await titles(page)).length);
     await page.locator('aside button', { hasText: 'Điện thoại' }).first().click();
@@ -144,7 +161,7 @@ async function cartState(page) {
       JSON.stringify({ dom: priceTitles, api: apiPrice.items.map((p) => p.name) }));
 
     // brand filter (radio) — click it the way a user does
-    await page.goto(BASE + '/products', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/products');
     await waitCards(page);
     const brandNames = await page.$$eval('aside label', (els) =>
       els.filter((e) => e.querySelector('input[name="brand"]')).map((e) => e.textContent.trim()));
@@ -201,7 +218,7 @@ async function cartState(page) {
 
     // C11: `maxPrice` rác / dưới mốc nhỏ nhất / lệch bước giá đều không được vỡ UI và nhãn phải khớp `input.value`.
     for (const badMax of ['abc', '100', '1234567']) {
-      await page.goto(`${BASE}/products?maxPrice=${badMax}`, { waitUntil: 'domcontentloaded' });
+      await openPage(page, `${BASE}/products?maxPrice=${badMax}`);
       await waitCards(page);
       const sliderState = await page.evaluate(() => {
         const range = document.querySelector('aside input[type="range"]');
@@ -215,7 +232,7 @@ async function cartState(page) {
       check(`C11b maxPrice=${badMax} label matches the slider value`, digits(sliderState.label) === String(sliderState.value),
         JSON.stringify(sliderState));
     }
-    await page.goto(BASE + '/products', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/products');
     await waitCards(page);
 
     // pagination
@@ -233,7 +250,10 @@ async function cartState(page) {
     }
 
     // ---------- D. Product detail + add to cart ----------
-    await page.goto(BASE + '/products/dien-thoai-saigon-x9-pro', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/products/dien-thoai-saigon-x9-pro');
+    // Biến thể mặc định = biến thể còn hàng đầu tiên trong catalog (server chốt theo tồn kho thật).
+    const p01Ssr = (await (await fetch(`${BASE}/api/products/dien-thoai-saigon-x9-pro`)).json()).product;
+    const expectedDefaultVariant = (p01Ssr.variants.find((variant) => variant.stock > 0) || p01Ssr.variants[0]).id;
     // Next.js 16 streams the page shell first: the header shows up before the product body.
     // Wait for the quantity stepper so the assertions below read a fully rendered page.
     await page.waitForSelector('button[aria-label="Tăng số lượng"]', { timeout: 20000 });
@@ -252,9 +272,11 @@ async function cartState(page) {
     const badge = await page.locator('header a[aria-label^="Giỏ hàng"]').getAttribute('aria-label');
     check('D6 header cart badge counts 3', badge.includes('3'), badge);
     const st1 = await cartState(page);
-    check('D7 cart stores only productId + quantity', st1.length === 1 && st1[0].productId === 'p01' && st1[0].quantity === 3
-      && Object.keys(st1[0]).sort().join(',') === 'productId,quantity',
-      JSON.stringify(st1));
+    check('D7 cart stores productId + variantId + quantity only',
+      st1.length === 1 && st1[0].productId === 'p01' && st1[0].quantity === 3
+        && st1[0].variantId === expectedDefaultVariant
+        && Object.keys(st1[0]).sort().join(',') === 'productId,quantity,variantId',
+      JSON.stringify({ cart: st1, expectedDefaultVariant }));
 
     // ---------- E. Cart page ----------
     await page.locator('header a[aria-label^="Giỏ hàng"]').click();
@@ -303,13 +325,16 @@ async function cartState(page) {
     await page.waitForFunction(() => document.querySelectorAll('li span[aria-live="polite"]').length === 1, null, { timeout: 10000 });
     check('E9 removing a line leaves 1 product', true, null);
     const st2 = await cartState(page);
-    check('E10 remaining cart line is p01 x2 (still id + quantity only)',
-      st2.length === 1 && st2[0].productId === 'p01' && st2[0].quantity === 2 && st2[0].price === undefined, JSON.stringify(st2));
+    check('E10 remaining cart line is p01 x2 (variantId, no price/name from localStorage)',
+      st2.length === 1 && st2[0].productId === 'p01' && st2[0].quantity === 2
+        && st2[0].variantId === expectedDefaultVariant && st2[0].price === undefined && st2[0].name === undefined,
+      JSON.stringify(st2));
     const subAfter = await totalRow(page, 'Tạm tính');
     check('E11 totals recomputed after removal', digits(subAfter) === '37980000', subAfter);
 
     // reload keeps cart (persistence)
     await page.reload({ waitUntil: 'domcontentloaded' });
+    await waitHydrated(page);
     await page.waitForSelector('li span[aria-live="polite"]', { timeout: 15000 });
     const qtyAfterReload = (await page.locator('li span[aria-live="polite"]').first().innerText()).trim();
     check('E12 cart survives reload', qtyAfterReload === '2', qtyAfterReload);
@@ -392,13 +417,13 @@ async function cartState(page) {
       ordersApi.orders.length);
 
     // ---------- H. Empty states & 404 ----------
-    await page.goto(BASE + '/cart', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/cart');
     await page.waitForSelector('text=Giỏ hàng đang trống', { timeout: 15000 });
     check('H1 empty cart state', true, null);
-    await page.goto(BASE + '/checkout', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/checkout');
     await page.waitForSelector('text=Chưa có sản phẩm để đặt', { timeout: 15000 });
     check('H2 checkout blocked when cart empty', true, null);
-    const nf = await page.goto(BASE + '/products/khong-ton-tai', { waitUntil: 'domcontentloaded' });
+    const nf = await openPage(page, BASE + '/products/khong-ton-tai');
     check('H3 unknown product returns 404', nf.status() === 404, nf.status());
     check('H4 not-found copy renders', /Không tìm thấy trang/.test(await page.locator('body').innerText()), null);
     const nfApi = await (await fetch(BASE + '/api/products/khong-ton-tai')).status;
@@ -406,22 +431,22 @@ async function cartState(page) {
 
     // ---------- I. Mobile layout ----------
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/');
     await waitCards(page);
     const overflowHome = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     check('I1 no horizontal overflow on home (390px)', overflowHome <= 1, overflowHome);
-    await page.goto(BASE + '/products', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/products');
     await waitCards(page);
     const overflowProducts = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     check('I2 no horizontal overflow on products (390px)', overflowProducts <= 1, overflowProducts);
-    await page.goto(BASE + '/products/dien-thoai-saigon-x9-pro', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/products/dien-thoai-saigon-x9-pro');
     const overflowDetail = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     check('I3 no horizontal overflow on detail (390px)', overflowDetail <= 1, overflowDetail);
 
     // Card action buttons: label must stay on one line and inside the card, also on the narrow
     // 4-column layout (1280px+) where "Thêm vào giỏ" + "Chi tiết" do not fit side by side.
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(BASE + '/products', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/products');
     await waitCards(page);
     const cardActions = await page.evaluate(() => {
       const card = document.querySelector('article');
@@ -449,7 +474,7 @@ async function cartState(page) {
 
     // ---------- K. Cart integrity: sửa localStorage không đổi được giá/số lượng ----------
     await page.setViewportSize({ width: 1366, height: 900 });
-    await page.goto(BASE + '/cart', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/cart');
     await page.evaluate(() => {
       localStorage.setItem('shop-ha-cart', JSON.stringify({
         state: {
@@ -461,28 +486,34 @@ async function cartState(page) {
         version: 1,
       }));
     });
-    await page.goto(BASE + '/cart', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/cart');
     await page.waitForSelector('li span[aria-live="polite"]', { timeout: 15000 });
     const tamperedLine = (await page.locator('li').first().innerText()).replace(/\n+/g, ' | ');
     const tamperedQty = (await page.locator('li span[aria-live="polite"]').first().innerText()).trim();
     const tamperedSub = await totalRow(page, 'Tạm tính');
-    check('K1 quantity is clamped to the catalog stock (12)', tamperedQty === '12', tamperedQty);
+    const tamperedStockHint = (tamperedLine.match(/(\d+)\s+sản phẩm trong kho/) || [])[1] || null;
+    check('K1 quantity is clamped to the stock of the resolved variant (200 -> catalog stock)',
+      Number(tamperedQty) > 0 && Number(tamperedQty) < 200 && Number(tamperedQty) === Number(tamperedStockHint),
+      JSON.stringify({ tamperedQty, tamperedStockHint }));
     check('K2 cart shows the catalog product, not the localStorage name/price',
       tamperedLine.includes('Saigon X9 Pro 256GB') && !tamperedLine.includes('Hàng giả') && !tamperedLine.includes('1.000.000'),
       tamperedLine.slice(0, 160));
-    check('K3 subtotal uses the catalog price (12 x 18.990.000)', digits(tamperedSub) === '227880000', tamperedSub);
+    check('K3 subtotal uses the catalog price x clamped quantity',
+      digits(tamperedSub) === String(Number(tamperedQty) * 18990000), JSON.stringify({ tamperedQty, tamperedSub }));
     check('K4 stepper is disabled at the stock limit',
       await page.locator('li button[aria-label="Tăng số lượng"]').first().isDisabled(), null);
     const tamperedStored = await cartState(page);
-    check('K5 store rewrites localStorage to id + clamped quantity',
-      tamperedStored.length === 1 && Object.keys(tamperedStored[0]).sort().join(',') === 'productId,quantity'
-        && tamperedStored[0].quantity === 12,
+    check('K5 store rewrites localStorage with the migrated variant + clamped quantity',
+      tamperedStored.length === 1
+        && Object.keys(tamperedStored[0]).sort().join(',') === 'productId,quantity,variantId'
+        && tamperedStored[0].variantId === 'p01-den-256gb'
+        && tamperedStored[0].quantity === Number(tamperedQty),
       JSON.stringify(tamperedStored));
     await page.evaluate(() => localStorage.removeItem('shop-ha-cart'));
 
     // ---------- L. Mobile 390px: ô tìm kiếm + bộ lọc thu gọn ----------
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/');
     await waitCards(page);
     const visibleSearch = await page.locator('form[role="search"] input[name="q"]:visible').count();
     check('L1 mobile shows a search box', visibleSearch >= 1, visibleSearch);
@@ -496,7 +527,7 @@ async function cartState(page) {
       mobileTitles.length > 0 && JSON.stringify(mobileTitles) === JSON.stringify(apiMobile.items.map((p) => p.name.trim())),
       JSON.stringify({ dom: mobileTitles, api: apiMobile.items.map((p) => p.name) }));
 
-    await page.goto(BASE + '/products', { waitUntil: 'domcontentloaded' });
+    await openPage(page, BASE + '/products');
     await waitCards(page);
     check('L3 filter panel starts collapsed on mobile',
       (await page.locator('aside input[type="range"]:visible').count()) === 0, null);
@@ -511,24 +542,27 @@ async function cartState(page) {
     check('L6 category filter still works on mobile',
       new URL(page.url()).searchParams.get('category') === 'laptop', page.url());
 
-    // ---------- M. Trừ tồn kho khi tạo đơn ----------
-    // Chọn sản phẩm còn hàng ít nhất (đọc từ API) để chạy lại được trên server đang giữ trạng thái.
+    // ---------- M. Trừ tồn kho theo biến thể khi tạo đơn ----------
+    // Chọn biến thể còn hàng ít nhất (đọc từ API) để chạy lại được trên server đang giữ trạng thái.
     const stockList = (await (await fetch(`${BASE}/api/products?perPage=50`)).json()).items;
-    const target = stockList.filter((item) => item.stock > 0).sort((a, b) => a.stock - b.stock)[0];
-    check('M0 there is a product left in stock to order', Boolean(target),
+    const candidates = stockList.flatMap((item) => item.variants.map((variant) => ({ product: item, variant })));
+    const target = candidates.filter((entry) => entry.variant.stock > 0).sort((a, b) => a.variant.stock - b.variant.stock)[0];
+    check('M0 there is a variant left in stock to order', Boolean(target),
       JSON.stringify(stockList.map((item) => `${item.id}:${item.stock}`)));
-    const stockBefore = target ? target.stock : 0;
+    const stockBefore = target ? target.variant.stock : 0;
     const orderPayload = (quantity) => JSON.stringify({
-      items: [{ productId: target.id, quantity }],
+      items: target ? [{ productId: target.product.id, variantId: target.variant.id, quantity }] : [],
       customer: { name: 'Trần Kho', phone: '0987654321', email: '', address: '456 Lê Lợi, Quận 3, TP. HCM', paymentMethod: 'cod' },
     });
     const firstOrder = await fetch(`${BASE}/api/orders`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: orderPayload(stockBefore),
     });
-    check('M1 order for the whole stock is accepted', firstOrder.status === 201, firstOrder.status);
-    const stockAfter = (await (await fetch(`${BASE}/api/products/${target.slug}`)).json()).product.stock;
-    check('M2 stock is decremented by the ordered quantity',
-      stockBefore > 0 && stockAfter === 0, JSON.stringify({ product: target.id, stockBefore, stockAfter }));
+    check('M1 order for the whole stock of one variant is accepted', firstOrder.status === 201, firstOrder.status);
+    const productAfter = (await (await fetch(`${BASE}/api/products/${target.product.slug}`)).json()).product;
+    const variantAfter = productAfter.variants.find((variant) => variant.id === target.variant.id);
+    check('M2 that variant is at 0 and the product total drops by the ordered quantity',
+      stockBefore > 0 && variantAfter.stock === 0 && productAfter.stock === target.product.stock - stockBefore,
+      JSON.stringify({ variant: target.variant.id, stockBefore, variantAfter: variantAfter.stock }));
     const secondOrder = await fetch(`${BASE}/api/orders`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: orderPayload(1),
     });
@@ -536,8 +570,23 @@ async function cartState(page) {
     check('M3 second order is rejected with 409', secondOrder.status === 409, secondOrder.status);
     check('M3b 409 message names the remaining stock', /chỉ còn 0 sản phẩm/.test(secondBody.message || ''), secondBody.message);
 
+    const fallback = stockList.find((item) => item.stock > 0 && item.variants.some((variant) => variant.stock > 0));
+    const fallbackVariant = fallback ? fallback.variants.find((variant) => variant.stock > 0) : null;
+    const fallbackOrder = await fetch(`${BASE}/api/orders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        items: [{ productId: fallback ? fallback.id : 'p01', quantity: 1 }],
+        customer: { name: 'Trần Kho', phone: '0987654321', email: '', address: '456 Lê Lợi, Quận 3, TP. HCM', paymentMethod: 'cod' },
+      }),
+    });
+    const fallbackOrderBody = await fallbackOrder.json();
+    check('M4 a line without variantId falls back to the first in-stock variant',
+      Boolean(fallback) && fallbackOrder.status === 201 && fallbackOrderBody.items[0].variantId === fallbackVariant.id
+        && Boolean(fallbackOrderBody.items[0].variantLabel),
+      JSON.stringify({ status: fallbackOrder.status, item: fallbackOrderBody.items && fallbackOrderBody.items[0] }));
+
     // ---------- N. Không lộ đơn của người khác ----------
-    const nakedSuccess = await page.goto(`${BASE}/checkout/success?orderId=${orderId}`, { waitUntil: 'domcontentloaded' });
+    const nakedSuccess = await openPage(page, `${BASE}/checkout/success?orderId=${orderId}`);
     const nakedBody = await page.locator('body').innerText();
     check('N1 success page without phone does not reveal the order',
       nakedSuccess.status() === 200 && /Chưa tra được đơn hàng/.test(nakedBody) && !/0912345678/.test(nakedBody),
@@ -545,6 +594,239 @@ async function cartState(page) {
     const wrongPhone = await (await fetch(`${BASE}/api/orders/${orderId}?phone=0900000000`)).status;
     check('N2 order detail API rejects a wrong phone', wrongPhone === 404, wrongPhone);
     await page.setViewportSize({ width: 1366, height: 900 });
+
+    // ---------- O. SEO: sitemap, robots, JSON-LD, ảnh OG ----------
+    const sitemapRes = await fetch(`${BASE}/sitemap.xml`);
+    const sitemapXml = await sitemapRes.text();
+    const sitemapCount = (sitemapXml.match(/<url>/g) || []).length;
+    check('O1 sitemap lists product + category URLs from the catalog',
+      sitemapRes.status === 200 && sitemapXml.includes('/products/dien-thoai-saigon-x9-pro')
+        && sitemapXml.includes('/products?category=dien-thoai') && sitemapCount >= 20,
+      sitemapCount);
+
+    const robotsRes = await fetch(`${BASE}/robots.txt`);
+    const robotsTxt = await robotsRes.text();
+    check('O2 robots points at the sitemap and keeps /api/ out of the index',
+      robotsRes.status === 200 && /Sitemap:\s*https?:\/\/\S+\/sitemap\.xml/.test(robotsTxt) && /Disallow:\s*\/api\//.test(robotsTxt),
+      robotsTxt.replace(/\n/g, ' | ').slice(0, 160));
+
+    await openPage(page, BASE + '/products/dien-thoai-saigon-x9-pro');
+    // JSON-LD là thẻ <script> nên không "visible" — chỉ cần có trong DOM.
+    await page.waitForSelector('#product-json-ld', { state: 'attached', timeout: 20000 });
+    const productLd = JSON.parse(await page.locator('#product-json-ld').textContent());
+    const breadcrumbLd = JSON.parse(await page.locator('#breadcrumb-json-ld').textContent());
+    const canonical = await page.locator('link[rel="canonical"]').getAttribute('href');
+    const ogImageMeta = await page.locator('meta[property="og:image"]').getAttribute('content');
+    check('O3 Product JSON-LD has name, price and availability',
+      productLd['@type'] === 'Product' && productLd.name === 'Saigon X9 Pro 256GB'
+        && productLd.offers.price === 18990000 && productLd.offers.priceCurrency === 'VND'
+        && productLd.offers.availability.endsWith('InStock') && productLd.sku === 'p01',
+      JSON.stringify({ name: productLd.name, offers: productLd.offers }));
+    check('O4 Product JSON-LD carries rating + variants',
+      productLd.aggregateRating.reviewCount === 214 && productLd.aggregateRating.ratingValue === 4.8
+        && productLd.hasVariant.length === 2 && productLd.hasVariant[0].sku === 'p01-den-256gb',
+      JSON.stringify({ rating: productLd.aggregateRating, variants: productLd.hasVariant.map((v) => v.sku) }));
+    check('O5 Breadcrumb JSON-LD has 4 levels ending at the product',
+      breadcrumbLd['@type'] === 'BreadcrumbList' && breadcrumbLd.itemListElement.length === 4
+        && breadcrumbLd.itemListElement[0].name === 'Trang chủ'
+        && breadcrumbLd.itemListElement[3].name === 'Saigon X9 Pro 256GB'
+        && breadcrumbLd.itemListElement[3].item.endsWith('/products/dien-thoai-saigon-x9-pro'),
+      JSON.stringify(breadcrumbLd.itemListElement.map((item) => item.name)));
+    check('O6 canonical + og:image point at the product page',
+      canonical.endsWith('/products/dien-thoai-saigon-x9-pro') && ogImageMeta.endsWith('/products/dien-thoai-saigon-x9-pro/opengraph-image'),
+      JSON.stringify({ canonical, ogImageMeta }));
+
+    const ogRes = await fetch(`${BASE}/products/dien-thoai-saigon-x9-pro/opengraph-image`);
+    const ogBuffer = Buffer.from(await ogRes.arrayBuffer());
+    check('O7 OG image is served as a real PNG',
+      ogRes.status === 200 && ogRes.headers.get('content-type') === 'image/png'
+        && ogBuffer.length > 5000 && ogBuffer.subarray(1, 4).toString() === 'PNG',
+      `${ogRes.status} ${ogRes.headers.get('content-type')} ${ogBuffer.length}`);
+
+    // ---------- P. Voucher: server tính mức giảm, mã không hợp lệ bị từ chối ----------
+    const voucherApi = async (body) => {
+      const res = await fetch(`${BASE}/api/vouchers`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    const p01Line = [{ productId: 'p01', variantId: 'p01-den-256gb', quantity: 1 }];
+    const saleVoucher = await voucherApi({ code: 'sale10', items: p01Line });
+    check('P1 SALE10 is accepted (case-insensitive) and capped at 500.000',
+      saleVoucher.status === 200 && saleVoucher.body.ok && saleVoucher.body.discount === 500000,
+      JSON.stringify(saleVoucher.body));
+    const amountVoucher = await voucherApi({ code: 'HA100K', items: p01Line });
+    check('P2 HA100K gives a flat 100.000', amountVoucher.status === 200 && amountVoucher.body.discount === 100000,
+      JSON.stringify(amountVoucher.body));
+    const unknownVoucher = await voucherApi({ code: 'KHONGCOTOI', items: p01Line });
+    check('P3 unknown code is refused with a Vietnamese message',
+      unknownVoucher.status === 422 && /không tồn tại/.test(unknownVoucher.body.message),
+      JSON.stringify(unknownVoucher.body));
+    const smallCart = await voucherApi({ code: 'VIP20', items: [{ productId: 'p15', variantId: 'p15-trang-1.5m', quantity: 1 }] });
+    check('P4 min-subtotal code is refused on a small cart',
+      smallCart.status === 422 && /từ/.test(smallCart.body.message), JSON.stringify(smallCart.body));
+    const shippingVoucher = await voucherApi({ code: 'FREESHIP', items: [{ productId: 'p15', variantId: 'p15-trang-1.5m', quantity: 1 }] });
+    check('P5 FREESHIP equals the shipping fee of a small order',
+      shippingVoucher.status === 200 && shippingVoucher.body.discount === 30000, JSON.stringify(shippingVoucher.body));
+    const fakePrice = await voucherApi({
+      code: 'SALE10',
+      items: [{ productId: 'p01', variantId: 'p01-den-256gb', quantity: 1, price: 1000 }],
+    });
+    check('P6 a price sent from the client is ignored (server uses the catalog)',
+      fakePrice.status === 200 && fakePrice.body.discount === 500000, JSON.stringify(fakePrice.body));
+
+    // Áp mã trong giỏ hàng thật: thêm p01 (biến thể mặc định) rồi nhập SALE10.
+    await openPage(page, BASE + '/products/dien-thoai-saigon-x9-pro');
+    await page.waitForSelector('button[aria-label="Tăng số lượng"]', { timeout: 20000 });
+    await page.getByRole('button', { name: 'Thêm vào giỏ hàng' }).click();
+    await openPage(page, BASE + '/cart');
+    await page.waitForSelector('#voucher-code', { timeout: 15000 });
+    await page.fill('#voucher-code', 'SALE10');
+    await page.getByRole('button', { name: 'Áp dụng' }).click();
+    await page.waitForSelector('text=Đã áp dụng SALE10', { timeout: 15000 });
+    const voucherRow = await totalRow(page, 'Mã giảm giá SALE10');
+    const totalWithVoucher = await totalRow(page, 'Tổng cộng');
+    check('P7 the cart shows the voucher row and the new total',
+      digits(voucherRow) === '500000' && digits(totalWithVoucher) === '16591000',
+      JSON.stringify({ voucherRow, totalWithVoucher }));
+
+    await page.getByRole('link', { name: 'Tiến hành đặt hàng' }).click();
+    await page.waitForURL(/\/checkout$/, { timeout: 15000 });
+    await page.fill('#name', 'Nguyễn Văn Test');
+    await page.fill('#phone', '0912345678');
+    await page.fill('#email', 'test@shopha.demo');
+    await page.fill('#address', '123 Nguyễn Huệ, Quận 1, TP. HCM');
+    await page.waitForSelector('text=Mã giảm giá SALE10', { timeout: 15000 });
+    await page.getByRole('button', { name: 'Đặt hàng' }).click();
+    await page.waitForURL(/\/checkout\/success\?orderId=/, { timeout: 20000 });
+    await page.waitForSelector('text=Đặt hàng thành công', { timeout: 15000 });
+    const voucherOrderId = new URL(page.url()).searchParams.get('orderId');
+    const voucherOrder = await (await fetch(`${BASE}/api/orders/${voucherOrderId}?phone=0912345678`)).json();
+    check('P8 the order stores the voucher and keeps bulk + voucher discounts separate',
+      voucherOrder.voucherCode === 'SALE10' && voucherOrder.voucherDiscount === 500000
+        && voucherOrder.bulkDiscount === 1899000 && voucherOrder.discount === 2399000 && voucherOrder.total === 16591000,
+      JSON.stringify({ voucherCode: voucherOrder.voucherCode, voucherDiscount: voucherOrder.voucherDiscount, bulk: voucherOrder.bulkDiscount, total: voucherOrder.total }));
+    check('P9 the success page shows the voucher row',
+      digits(await totalRow(page, 'Mã giảm giá SALE10')) === '500000', null);
+
+    // ---------- Q. Đánh giá sản phẩm: validate bằng zod, lưu thật, hiện trên trang ----------
+    const reviewSlug = 'dien-thoai-saigon-x9-pro';
+    const reviewAuthor = `QA ${Date.now()}`;
+    const reviewPost = (body) => fetch(`${BASE}/api/products/${reviewSlug}/reviews`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const badReview = await reviewPost({ author: 'X', rating: 9, body: 'ngắn' });
+    const badReviewBody = await badReview.json();
+    check('Q1 an invalid review is refused with a Vietnamese message',
+      badReview.status === 422 && /ít nhất|từ 1 đến 5/.test(badReviewBody.message || ''), JSON.stringify(badReviewBody));
+    const goodReview = await reviewPost({ author: reviewAuthor, rating: 5, title: 'Đúng mô tả', body: 'Đóng gói kỹ, máy chạy êm sau một tuần dùng thử.' });
+    const goodReviewBody = await goodReview.json();
+    check('Q2 a valid review is stored and folded into the summary',
+      goodReview.status === 201 && goodReviewBody.review.author === reviewAuthor
+        && goodReviewBody.summary.count >= 215 && goodReviewBody.summary.stored >= 1 && goodReviewBody.summary.average > 4,
+      JSON.stringify(goodReviewBody.summary));
+    const dupReview = await reviewPost({ author: reviewAuthor.toUpperCase(), rating: 4, body: 'Gửi lại lần hai với cùng tên để kiểm tra chặn trùng.' });
+    check('Q3 the same author cannot review one product twice', dupReview.status === 409, dupReview.status);
+    const missingProductReview = await fetch(`${BASE}/api/products/khong-ton-tai/reviews`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ author: 'QA 2', rating: 5, body: 'Sản phẩm này không tồn tại trong catalog.' }),
+    });
+    check('Q4 reviews of an unknown product return 404', missingProductReview.status === 404, missingProductReview.status);
+
+    await openPage(page, `${BASE}/products/${reviewSlug}`);
+    await page.waitForSelector('#danh-gia', { state: 'attached', timeout: 20000 });
+    await page.waitForSelector(`text=${reviewAuthor}`, { timeout: 15000 });
+    check('Q5 the stored review shows up in the product page section', true, null);
+    const uiReviewAuthor = `UI ${Date.now()}`;
+    await page.fill('#review-author', uiReviewAuthor);
+    await page.getByRole('radio', { name: '4 sao' }).click();
+    await page.fill('#review-body', 'Hàng đúng mô tả, giao nhanh, sẽ mua thêm phụ kiện cho máy.');
+    await page.getByRole('button', { name: 'Gửi đánh giá' }).click();
+    await page.waitForSelector('text=Cảm ơn bạn đã đánh giá sản phẩm!', { timeout: 15000 });
+    check('Q6 the form posts a review and shows it without a reload',
+      (await page.locator('body').innerText()).includes(uiReviewAuthor), uiReviewAuthor);
+
+    // ---------- R. Trạng thái đơn: PATCH có kiểm tra chủ đơn + đọc lại từ store ----------
+    const patchStatus = (id, body) => fetch(`${BASE}/api/orders/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const skipStep = await patchStatus(orderId, { phone: '0912345678', status: 'done' });
+    check('R1 skipping a status step is refused with 409', skipStep.status === 409, skipStep.status);
+    const confirmStep = await patchStatus(orderId, { phone: '0912345678', status: 'confirmed' });
+    const confirmBody = await confirmStep.json();
+    check('R2 PATCH moves the order pending -> confirmed',
+      confirmStep.status === 200 && confirmBody.status === 'confirmed' && confirmBody.updatedAt !== confirmBody.createdAt,
+      JSON.stringify({ status: confirmBody.status, updatedAt: confirmBody.updatedAt }));
+    const rereadOrder = await (await fetch(`${BASE}/api/orders/${orderId}?phone=0912345678`)).json();
+    check('R3 the new status is read back after a fresh request', rereadOrder.status === 'confirmed',
+      rereadOrder.status);
+    const wrongPhonePatch = await patchStatus(orderId, { phone: '0900000000', status: 'shipping' });
+    check('R4 another phone cannot change the status', wrongPhonePatch.status === 404, wrongPhonePatch.status);
+    const badStatus = await patchStatus(orderId, { phone: '0912345678', status: 'đang-giao' });
+    check('R5 an unknown status value is refused with 422', badStatus.status === 422, badStatus.status);
+
+    await openPage(page, BASE + '/orders');
+    await page.waitForSelector('#lookup-phone', { timeout: 15000 });
+    await page.fill('#lookup-phone', '0912345678');
+    await page.getByRole('button', { name: /Tra cứu/ }).click();
+    await page.waitForSelector(`text=${orderCode}`, { timeout: 15000 });
+    await page.getByRole('button', { name: /Chuyển sang "Đang giao"/ }).first().click();
+    await page.waitForSelector(`text=Đang giao`, { timeout: 15000 });
+    const afterUiPatch = await (await fetch(`${BASE}/api/orders/${orderId}?phone=0912345678`)).json();
+    check('R6 the status button in the lookup page updates the order',
+      afterUiPatch.status === 'shipping' && afterUiPatch.updatedAt !== afterUiPatch.createdAt,
+      JSON.stringify({ status: afterUiPatch.status, updatedAt: afterUiPatch.updatedAt }));
+
+    // ---------- S. Biến thể: chọn phân loại, giỏ tách dòng theo biến thể ----------
+    const p01Api = (await (await fetch(`${BASE}/api/products/dien-thoai-saigon-x9-pro`)).json()).product;
+    check('S1 API exposes variants and the product stock equals their sum',
+      p01Api.variants.length === 2 && p01Api.variants.every((variant) => typeof variant.id === 'string' && variant.stock >= 0)
+        && p01Api.stock === p01Api.variants.reduce((sum, variant) => sum + variant.stock, 0),
+      JSON.stringify(p01Api.variants));
+    const inStockVariants = p01Api.variants.filter((variant) => variant.stock > 0);
+    const firstPick = inStockVariants[0] || p01Api.variants[0];
+    const secondPick = inStockVariants.find((variant) => variant.id !== firstPick.id);
+    check('S1b both variants are still in stock (chạy suite trên DB mới)',
+      inStockVariants.length === 2, JSON.stringify(p01Api.variants.map((variant) => `${variant.id}:${variant.stock}`)));
+
+    const variantOrder = await fetch(`${BASE}/api/orders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        items: [{ productId: 'p01', variantId: secondPick.id, quantity: 1 }],
+        customer: { name: 'Lê Biến Thể', phone: '0977000111', email: '', address: '99 Pasteur, Quận 1, TP. HCM', paymentMethod: 'cod' },
+      }),
+    });
+    const variantOrderBody = await variantOrder.json();
+    const p01AfterVariantOrder = (await (await fetch(`${BASE}/api/products/dien-thoai-saigon-x9-pro`)).json()).product;
+    const pickedAfter = p01AfterVariantOrder.variants.find((variant) => variant.id === secondPick.id);
+    check('S2 ordering one variant only touches that variant',
+      variantOrder.status === 201 && variantOrderBody.items[0].variantId === secondPick.id
+        && variantOrderBody.items[0].variantLabel === variantLabelOf(secondPick)
+        && pickedAfter.stock === secondPick.stock - 1
+        && p01AfterVariantOrder.variants.find((variant) => variant.id === firstPick.id).stock === firstPick.stock,
+      JSON.stringify({ status: variantOrder.status, item: variantOrderBody.items && variantOrderBody.items[0], before: secondPick.stock, after: pickedAfter.stock }));
+
+    await openPage(page, BASE + '/products/dien-thoai-saigon-x9-pro');
+    await page.waitForSelector('button[aria-label="Tăng số lượng"]', { timeout: 20000 });
+    await page.getByRole('button', { name: secondPick.color, exact: true }).click();
+    const pickedLabel = await page.locator('text=Phân loại:').first().innerText();
+    check('S3 the variant picker switches the selected phân loại',
+      pickedLabel.includes(secondPick.color)
+        && (await page.getByRole('button', { name: secondPick.color, exact: true }).getAttribute('aria-pressed')) === 'true',
+      pickedLabel);
+    await page.getByRole('button', { name: 'Thêm vào giỏ hàng' }).click();
+    await page.getByRole('button', { name: firstPick.color, exact: true }).click();
+    await page.getByRole('button', { name: 'Thêm vào giỏ hàng' }).click();
+    await openPage(page, BASE + '/cart');
+    await page.waitForSelector('li span[aria-live="polite"]', { timeout: 15000 });
+    const cartLines = await cartState(page);
+    const cartText = await page.locator('body').innerText();
+    check('S4 two variants of one product stay on two cart lines',
+      cartLines.length === 2
+        && cartLines.map((line) => line.variantId).sort().join(',') === [firstPick.id, secondPick.id].sort().join(',')
+        && cartText.includes(variantLabelOf(firstPick)) && cartText.includes(variantLabelOf(secondPick)),
+      JSON.stringify({ cartLines, labels: [variantLabelOf(firstPick), variantLabelOf(secondPick)] }));
+    await page.evaluate(() => localStorage.removeItem('shop-ha-cart'));
 
     // ---------- J. Console hygiene ----------
     check('J1 no page errors', pageErrors.length === 0, pageErrors.slice(0, 3));

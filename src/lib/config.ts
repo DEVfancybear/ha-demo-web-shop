@@ -1,5 +1,7 @@
 export const siteConfig = {
   name: process.env.NEXT_PUBLIC_SITE_NAME ?? "ShopHA",
+  /** URL công khai của site, dùng cho canonical/JSON-LD/sitemap. Đổi bằng NEXT_PUBLIC_SITE_URL khi deploy. */
+  url: (process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000").replace(/\/$/, ""),
   description:
     "Cửa hàng demo đồ công nghệ: điện thoại, laptop, tai nghe, đồng hồ và phụ kiện.",
   hotline: process.env.NEXT_PUBLIC_HOTLINE ?? "1900 0000",

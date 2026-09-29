@@ -3,7 +3,7 @@ import { Breadcrumbs } from "@/components/common/breadcrumbs";
 
 export const metadata = {
   title: "Tra cứu đơn hàng",
-  description: "Nhập số điện thoại đã đặt hàng để xem lại đơn của bạn trong phiên chạy hiện tại.",
+  description: "Nhập số điện thoại đã đặt hàng để xem lại đơn của bạn.",
 };
 
 export default function OrdersPage() {
@@ -12,8 +12,8 @@ export default function OrdersPage() {
       <Breadcrumbs items={[{ href: "/", label: "Trang chủ" }, { label: "Đơn hàng" }]} />
       <h1 className="mb-2 text-2xl font-bold">Tra cứu đơn hàng</h1>
       <p className="mb-6 text-sm text-zinc-600 dark:text-zinc-400">
-        Đơn hàng được lưu trong bộ nhớ của server nên sẽ mất khi khởi động lại. Để xem đơn, nhập đúng số điện thoại
-        đã dùng khi đặt — thông tin của khách khác không hiển thị ở đây.
+        Đơn hàng được lưu trong SQLite trên server nên vẫn còn sau khi khởi động lại. Để xem đơn, nhập đúng số điện
+        thoại đã dùng khi đặt — thông tin của khách khác không hiển thị ở đây.
       </p>
       <OrderLookup />
     </div>

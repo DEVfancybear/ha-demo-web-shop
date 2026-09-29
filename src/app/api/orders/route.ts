@@ -32,7 +32,10 @@ export async function POST(request: Request) {
 
   const result = createOrder(payload);
   if (!result.ok) {
-    return NextResponse.json({ message: result.message }, { status: result.status });
+    return NextResponse.json(
+      { message: result.message, ...(result.voucherInvalid ? { voucherInvalid: true } : {}) },
+      { status: result.status },
+    );
   }
 
   return NextResponse.json(result.order, { status: 201 });
