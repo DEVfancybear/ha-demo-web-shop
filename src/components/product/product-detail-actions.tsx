@@ -3,8 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { AddToCartButton } from "@/components/product/add-to-cart-button";
+import { CompareToggle } from "@/components/product/compare-toggle";
 import { QuantityStepper } from "@/components/product/quantity-stepper";
 import { VariantPicker } from "@/components/product/variant-picker";
+import { WishlistToggle } from "@/components/product/wishlist-toggle";
 import { buttonClass } from "@/components/ui/button";
 import { defaultVariant, findVariant, variantStockOf } from "@/data/catalog";
 import type { Product } from "@/types";
@@ -46,6 +48,10 @@ export function ProductDetailActions({ product }: { product: Product }) {
         <Link href="/cart" className={buttonClass({ variant: "outline", size: "lg" })}>
           Xem giỏ hàng
         </Link>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        <WishlistToggle productId={product.id} name={product.name} withLabel />
+        <CompareToggle productId={product.id} name={product.name} withLabel />
       </div>
     </div>
   );

@@ -83,14 +83,43 @@ export function readDb(): DatabaseSync | null {
   const cached = globalDb.__shopHaDb;
   if (cached) return cached.db;
 
-  let db: DatabaseSync;
+  const file = databasePath();
+  // File chưa có hoặc rỗng: coi như chưa có DB. Mở một file 0 byte sẽ "thành công" nhưng mọi truy vấn
+  // sau đó lỗi "no such table" và biến toàn bộ API thành 500 — thà trả `null` để catalog là nguồn số gốc.
+  let size: number;
   try {
-    db = open(databasePath(), true);
+    size = fs.statSync(file).size;
   } catch {
     return null;
   }
+  if (size === 0) return null;
+
+  const db = openReadable(file);
+  if (!db) return null;
   globalDb.__shopHaDb = { db, readOnly: true };
   return db;
+}
+
+/**
+ * Mở DB chỉ để đọc và kiểm tra có schema. File không phải SQLite, hoặc thiếu bảng `orders` (file rác,
+ * file của chương trình khác) thì trả `null`; handle được đóng trước khi trả vì trên Windows còn handle
+ * là file còn bị khoá.
+ */
+function openReadable(file: string): DatabaseSync | null {
+  let db: DatabaseSync | null = null;
+  try {
+    db = open(file, true);
+    const hasSchema = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'orders'").get();
+    if (!hasSchema) throw new Error("missing schema");
+    return db;
+  } catch {
+    try {
+      db?.close();
+    } catch {
+      // handle đã hỏng thì không đóng được nữa; bỏ qua.
+    }
+    return null;
+  }
 }
 
 /** Mở DB để ghi (tạo file + schema nếu cần). Handle chỉ đọc cũ được đóng lại để nhường chỗ. */

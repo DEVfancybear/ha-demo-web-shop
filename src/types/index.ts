@@ -67,6 +67,32 @@ export type OrderItem = {
   quantity: number;
 };
 
+/** Nguồn của một gợi ý trong ô tìm kiếm. */
+export type SearchSuggestionType = "product" | "category" | "brand";
+
+/**
+ * Gợi ý tìm kiếm trả về từ `GET /api/search/suggest`.
+ * `price`/`salePrice` chỉ có với gợi ý sản phẩm; giá vẫn do server đọc từ catalog.
+ */
+export type SearchSuggestion = {
+  type: SearchSuggestionType;
+  label: string;
+  href: string;
+  meta?: string;
+  emoji?: string;
+  price?: number;
+  salePrice?: number;
+};
+
+export type SearchSuggestResult = {
+  query: string;
+  /** Độ dài tối thiểu của từ khoá để có gợi ý. */
+  minLength: number;
+  /** Tổng số sản phẩm khớp (không bị cắt theo `limit`). */
+  total: number;
+  items: SearchSuggestion[];
+};
+
 export type ProductQuery = {
   q?: string;
   category?: string;

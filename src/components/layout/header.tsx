@@ -3,6 +3,8 @@ import { Suspense } from "react";
 import { Phone } from "lucide-react";
 import { siteConfig, mainNav } from "@/lib/config";
 import { CartButton } from "@/components/layout/cart-button";
+import { CompareButton } from "@/components/layout/compare-button";
+import { WishlistButton } from "@/components/layout/wishlist-button";
 import { SearchBar } from "@/components/layout/search-bar";
 import { categories } from "@/data/catalog";
 
@@ -44,6 +46,8 @@ export function Header() {
         >
           <Phone size={16} /> {siteConfig.hotline}
         </a>
+        <WishlistButton />
+        <CompareButton />
         <CartButton />
       </div>
 

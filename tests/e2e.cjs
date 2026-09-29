@@ -57,6 +57,26 @@ async function cartState(page) {
     return raw ? JSON.parse(raw).state.items : [];
   });
 }
+async function wishlistState(page) {
+  return page.evaluate(() => {
+    const raw = localStorage.getItem('shop-ha-wishlist');
+    return raw ? JSON.parse(raw).state.ids : [];
+  });
+}
+async function compareState(page) {
+  return page.evaluate(() => {
+    const raw = localStorage.getItem('shop-ha-compare');
+    return raw ? JSON.parse(raw).state.ids : [];
+  });
+}
+/** Tên sản phẩm trên thẻ thứ `index`, chuẩn hoá khoảng trắng giống `titles()`. */
+async function cardName(page, index) {
+  return page
+    .locator('article')
+    .nth(index)
+    .locator('h3')
+    .evaluate((el) => el.textContent.trim().replace(/\s+/g, ' '));
+}
 
 (async () => {
   const browser = await chromium.launch({ channel: process.env.PW_CHANNEL || 'msedge' });
@@ -254,6 +274,11 @@ async function cartState(page) {
     // Biến thể mặc định = biến thể còn hàng đầu tiên trong catalog (server chốt theo tồn kho thật).
     const p01Ssr = (await (await fetch(`${BASE}/api/products/dien-thoai-saigon-x9-pro`)).json()).product;
     const expectedDefaultVariant = (p01Ssr.variants.find((variant) => variant.stock > 0) || p01Ssr.variants[0]).id;
+    // Bài dưới đặt 3 sản phẩm của biến thể mặc định. Chạy lại E2E trên cùng một file DB sẽ bào mòn tồn kho
+    // (mỗi lần 3 chiếc) và tới lúc nút "+" bị khoá vì hết hàng; báo rõ thay vì timeout 30s khó hiểu.
+    check('D0 database còn đủ tồn kho cho bài kiểm tra (mỗi lần chạy cần file DB mới)',
+      Math.max(...p01Ssr.variants.map((variant) => variant.stock)) >= 3,
+      JSON.stringify(p01Ssr.variants.map((variant) => `${variant.id}:${variant.stock}`)));
     // Next.js 16 streams the page shell first: the header shows up before the product body.
     // Wait for the quantity stepper so the assertions below read a fully rendered page.
     await page.waitForSelector('button[aria-label="Tăng số lượng"]', { timeout: 20000 });
@@ -450,11 +475,14 @@ async function cartState(page) {
     await waitCards(page);
     const cardActions = await page.evaluate(() => {
       const card = document.querySelector('article');
-      const btn = card.querySelector('button');
+      // Thẻ giờ có thêm nút trái tim/so sánh ở ảnh nên phải chọn đúng nút "Thêm vào giỏ".
+      const buttons = Array.from(card.querySelectorAll('button'));
+      const btn = buttons.find((b) => b.textContent.includes('Thêm vào giỏ')) || buttons.at(-1);
+      const detail = Array.from(card.querySelectorAll('a')).find((a) => a.textContent.trim() === 'Chi tiết');
+      if (!btn || !detail) return { missing: true };
       const label = Array.from(btn.childNodes).find((n) => n.nodeType === 3 && n.textContent.trim());
       const range = document.createRange();
       range.selectNode(label);
-      const detail = Array.from(card.querySelectorAll('a')).find((a) => a.textContent.trim() === 'Chi tiết');
       const cardRect = card.getBoundingClientRect();
       const boxes = [btn, detail].map((el) => el.getBoundingClientRect());
       return {
@@ -827,6 +855,342 @@ async function cartState(page) {
         && cartText.includes(variantLabelOf(firstPick)) && cartText.includes(variantLabelOf(secondPick)),
       JSON.stringify({ cartLines, labels: [variantLabelOf(firstPick), variantLabelOf(secondPick)] }));
     await page.evaluate(() => localStorage.removeItem('shop-ha-cart'));
+
+    // ---------- T. Autocomplete tìm kiếm ----------
+    await page.setViewportSize({ width: 1366, height: 900 });
+    const suggestApi = async (params) => {
+      const response = await fetch(`${BASE}/api/search/suggest?${new URLSearchParams(params)}`);
+      if (!response.ok) throw new Error(`api suggest ${response.status}`);
+      return response.json();
+    };
+    const apiLap = await apiProducts({ q: 'lap', perPage: 50 });
+    const suggestLap = await suggestApi({ q: 'lap' });
+    check('T1 API gợi ý khớp đúng danh sách của /api/products',
+      suggestLap.total === apiLap.total
+        && suggestLap.items.filter((item) => item.type === 'product').map((item) => item.label).join('|') === apiLap.items.map((p) => p.name).join('|')
+        && suggestLap.items.every((item) => item.href.startsWith('/') && item.label.length > 0),
+      JSON.stringify({ total: suggestLap.total, items: suggestLap.items.map((item) => `${item.type}:${item.label}`) }));
+
+    const suggestVi = await suggestApi({ q: 'dien thoai' });
+    check('T2 gợi ý hiểu tiếng Việt không dấu và có cả gợi ý danh mục',
+      suggestVi.total === 3 && suggestVi.items.some((item) => item.type === 'category' && item.href === '/products?category=dien-thoai'),
+      JSON.stringify(suggestVi.items.map((item) => `${item.type}:${item.label}`)));
+
+    const suggestShort = await suggestApi({ q: 'd' });
+    const suggestBlank = await suggestApi({ q: '   ' });
+    const suggestLimit2 = await suggestApi({ q: 'dien thoai', limit: '2' });
+    const suggestLimit0 = await suggestApi({ q: 'dien thoai', limit: '0' });
+    const suggestLimit99 = await suggestApi({ q: 'dien thoai', limit: '99' });
+    check('T3 chặn từ khoá dưới 2 ký tự và kẹp limit trong khoảng 1..8',
+      suggestShort.items.length === 0 && suggestBlank.items.length === 0
+        && suggestLimit2.items.length === 2 && suggestLimit0.items.length === 1
+        && suggestLimit99.items.length > 2 && suggestLimit99.items.length <= 8,
+      JSON.stringify({ short: suggestShort.items.length, blank: suggestBlank.items.length, limit2: suggestLimit2.items.length, limit0: suggestLimit0.items.length, limit99: suggestLimit99.items.length }));
+
+    await openPage(page, BASE + '/');
+    await waitCards(page);
+    const searchBox = page.locator('form[role="search"] input[name="q"]:visible').first();
+    await searchBox.click();
+    await searchBox.fill('halio');
+    await page.waitForSelector('form[role="search"] li[role="option"]', { timeout: 15000 });
+    const suggestOptions = await page.$$eval('form[role="search"] li[role="option"]', (els) =>
+      els.map((el) => ({
+        label: (el.querySelector('.font-medium') || el).textContent.trim(),
+        type: el.getAttribute('data-suggestion-type'),
+      })));
+    const suggestExpanded = await searchBox.getAttribute('aria-expanded');
+    const firstOptionText = await page.locator('form[role="search"] li[role="option"]').first().innerText();
+    check('T4 gõ 2+ ký tự hiện listbox đúng ARIA, có giá tiền và loại gợi ý',
+      suggestOptions.length >= 2 && suggestExpanded === 'true'
+        && suggestOptions.some((option) => option.type === 'product') && /₫/.test(firstOptionText),
+      JSON.stringify({ expanded: suggestExpanded, options: suggestOptions, firstOption: firstOptionText.replace(/\n/g, ' / ') }));
+
+    await searchBox.press('ArrowDown');
+    const activeOptionId = await searchBox.getAttribute('aria-activedescendant');
+    const activeOptionText = activeOptionId
+      ? await page.locator(`li[id="${activeOptionId}"]`).innerText().catch(() => '')
+      : '';
+    await searchBox.press('Enter');
+    await page.waitForURL(/\/products\/laptop-halio-air-14$/, { timeout: 15000 });
+    check('T5 ↓ chọn gợi ý đầu rồi Enter đi thẳng tới trang chi tiết',
+      Boolean(activeOptionId) && /Halio Air 14/.test(activeOptionText) && page.url().endsWith('/products/laptop-halio-air-14'),
+      JSON.stringify({ activeOptionId, activeOptionText: activeOptionText.split('\n')[0], url: page.url() }));
+
+    await openPage(page, BASE + '/');
+    await waitCards(page);
+    const searchBoxEscape = page.locator('form[role="search"] input[name="q"]:visible').first();
+    await searchBoxEscape.fill('tai nghe');
+    await page.waitForSelector('form[role="search"] li[role="option"]', { timeout: 15000 });
+    await searchBoxEscape.press('Escape');
+    await page.waitForFunction(() => document.querySelectorAll('form[role="search"] ul[role="listbox"]').length === 0, null, { timeout: 10000 });
+    const keptValue = await searchBoxEscape.inputValue();
+    await searchBoxEscape.press('Enter');
+    await page.waitForURL(/\/products\?.*q=tai/, { timeout: 15000 });
+    await waitCards(page);
+    const valueOnProducts = await page.locator('form[role="search"] input[name="q"]').first().inputValue();
+    check('T6 Esc đóng gợi ý nhưng giữ từ khoá, Enter vẫn gửi form tìm kiếm',
+      keptValue === 'tai nghe' && valueOnProducts === 'tai nghe' && /q=tai/.test(page.url()),
+      JSON.stringify({ keptValue, valueOnProducts, url: page.url() }));
+
+    await openPage(page, BASE + '/');
+    await waitCards(page);
+    const searchBoxCategory = page.locator('form[role="search"] input[name="q"]:visible').first();
+    await searchBoxCategory.fill('dien thoai');
+    await page.waitForSelector('form[role="search"] li[data-suggestion-type="category"]', { timeout: 15000 });
+    await page.locator('form[role="search"] li[data-suggestion-type="category"]').first().click();
+    await page.waitForURL(/\/products\?category=dien-thoai/, { timeout: 15000 });
+    await waitCards(page);
+    const categoryTitles = await titles(page);
+    check('T7 bấm gợi ý danh mục đi thẳng tới danh mục đó',
+      categoryTitles.length === 3 && new URL(page.url()).searchParams.get('category') === 'dien-thoai',
+      JSON.stringify({ count: categoryTitles.length, url: page.url() }));
+
+    await openPage(page, BASE + '/');
+    const searchBoxShort = page.locator('form[role="search"] input[name="q"]:visible').first();
+    await searchBoxShort.fill('l');
+    await page.waitForTimeout(800);
+    const shortListCount = await page.locator('form[role="search"] ul[role="listbox"]').count();
+    check('T8 từ khoá 1 ký tự không mở gợi ý', shortListCount === 0, shortListCount);
+
+    await openPage(page, `${BASE}/products?q=${encodeURIComponent('dien thoai')}`);
+    await waitCards(page);
+    await page.waitForTimeout(700);
+    const autoPopup = await page.locator('form[role="search"] ul[role="listbox"]').count();
+    check('T9 mở sẵn trang /products?q=... không tự bật popup gợi ý', autoPopup === 0, autoPopup);
+
+    await openPage(page, BASE + '/');
+    await waitCards(page);
+    const searchBoxLate = page.locator('form[role="search"] input[name="q"]:visible').first();
+    await searchBoxLate.click();
+    await searchBoxLate.fill('halio');
+    await page.waitForTimeout(350);
+    await searchBoxLate.press('Escape');
+    await page.waitForTimeout(800);
+    const latePopup = await page.locator('form[role="search"] ul[role="listbox"]').count();
+    check('T10 response về muộn không mở lại popup đã đóng bằng Esc', latePopup === 0, latePopup);
+
+    await openPage(page, BASE + '/');
+    const searchBoxNone = page.locator('form[role="search"] input[name="q"]:visible').first();
+    await searchBoxNone.click();
+    await searchBoxNone.fill('zzzz');
+    await page.waitForSelector('form[role="search"] p[role="status"]', { timeout: 15000 });
+    const noneExpanded = await searchBoxNone.getAttribute('aria-expanded');
+    const noneControls = await searchBoxNone.getAttribute('aria-controls');
+    const noResultText = await page.locator('form[role="search"] p[role="status"]').innerText();
+    check('T11 không có gợi ý thì aria-expanded=false và không trỏ tới listbox không tồn tại',
+      noneExpanded === 'false' && noneControls === null && /Không có gợi ý/.test(noResultText),
+      JSON.stringify({ noneExpanded, noneControls, noResultText }));
+
+    await openPage(page, BASE + '/');
+    await waitCards(page);
+    const searchBoxTab = page.locator('form[role="search"] input[name="q"]:visible').first();
+    await searchBoxTab.click();
+    await searchBoxTab.fill('halio');
+    await page.waitForSelector('form[role="search"] ul[role="listbox"]', { timeout: 15000 });
+    const popupLinkTabIndex = await page
+      .locator('form[role="search"] a[href^="/products?q="]')
+      .first()
+      .getAttribute('tabindex');
+    await searchBoxTab.press('Tab');
+    await page.waitForTimeout(200);
+    const afterTabPopup = await page.locator('form[role="search"] ul[role="listbox"]').count();
+    check('T12 Tab khỏi ô tìm kiếm thì đóng popup và link "Xem tất cả" không nhận Tab',
+      popupLinkTabIndex === '-1' && afterTabPopup === 0,
+      JSON.stringify({ popupLinkTabIndex, afterTabPopup }));
+
+    // T13: API gợi ý lỗi (HTTP 200 nhưng thân không phải JSON) -> popup phải nói đúng nguyên nhân
+    // ("không tải được"), không được nói nhầm thành "không có gợi ý"; Enter vẫn submit form.
+    await openPage(page, BASE + '/');
+    await waitCards(page);
+    await page.route('**/api/search/suggest*', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"items":' }));
+    const searchBoxFail = page.locator('form[role="search"] input[name="q"]:visible').first();
+    await searchBoxFail.click();
+    await searchBoxFail.fill('halio');
+    await page.waitForSelector('form[role="search"] p[role="status"]', { timeout: 15000 });
+    const failText = await page.locator('form[role="search"] p[role="status"]').innerText();
+    const failListboxes = await page.locator('form[role="search"] ul[role="listbox"]').count();
+    await page.unroute('**/api/search/suggest*');
+    await searchBoxFail.press('Enter');
+    await page.waitForURL(/\/products\?.*q=halio/, { timeout: 15000 });
+    check('T13 API gợi ý lỗi thì báo đúng nguyên nhân và Enter vẫn gửi form tìm kiếm',
+      /Không tải được gợi ý/.test(failText) && failListboxes === 0 && /q=halio/.test(page.url()),
+      JSON.stringify({ failText, failListboxes, url: page.url() }));
+
+    // ---------- U. Wishlist ----------
+    await page.evaluate(() => localStorage.removeItem('shop-ha-wishlist'));
+    await openPage(page, BASE + '/products');
+    await waitCards(page);
+    const firstCardName = await cardName(page, 0);
+    const firstCardSlug = (await page.locator('article').first().locator('h3 a').getAttribute('href')).replace('/products/', '');
+    const firstCardId = (await (await fetch(`${BASE}/api/products/${firstCardSlug}`)).json()).product.id;
+    const firstHeart = page.locator('article').first().locator('button[aria-label*="yêu thích"]');
+    const heartBefore = await firstHeart.getAttribute('aria-pressed');
+    await firstHeart.click();
+    await page.waitForFunction(() => !!localStorage.getItem('shop-ha-wishlist'), null, { timeout: 10000 });
+    const wishIds1 = await wishlistState(page);
+    const wishBadge1 = await page.locator('header a[href="/wishlist"]').getAttribute('aria-label');
+    check('U1 bấm trái tim lưu vào localStorage, đổi aria-pressed và hiện badge ở header',
+      heartBefore === 'false' && (await firstHeart.getAttribute('aria-pressed')) === 'true'
+        && wishIds1.length === 1 && wishIds1[0] === firstCardId && wishBadge1.includes('(1 sản phẩm)'),
+      JSON.stringify({ heartBefore, wishIds1, firstCardId, wishBadge1 }));
+
+    await openPage(page, BASE + '/wishlist');
+    await page.waitForSelector('article', { timeout: 20000 });
+    const wishlistTitles = await titles(page);
+    const wishBadge2 = await page.locator('header a[href="/wishlist"]').getAttribute('aria-label');
+    check('U2 /wishlist hiện đúng sản phẩm đã lưu và giữ sau khi tải lại trang',
+      wishlistTitles.length === 1 && wishlistTitles[0] === firstCardName && wishBadge2.includes('(1 sản phẩm)'),
+      JSON.stringify({ wishlistTitles, firstCardName, wishBadge2 }));
+
+    await page.locator('button[aria-label*="yêu thích"]').first().click();
+    await page.waitForSelector('text=Chưa có sản phẩm yêu thích', { timeout: 10000 });
+    const wishIds3 = await wishlistState(page);
+    check('U3 bỏ yêu thích ngay trên /wishlist trả về trạng thái rỗng', wishIds3.length === 0, JSON.stringify(wishIds3));
+
+    await page.evaluate(() =>
+      localStorage.setItem('shop-ha-wishlist', JSON.stringify({ state: { ids: ['p01', 'p01', 'khong-co', 'p02', 42] }, version: 1 })));
+    await openPage(page, BASE + '/wishlist');
+    await page.waitForSelector('article', { timeout: 20000 });
+    const cleanTitles = await titles(page);
+    const cleanBadge = await page.locator('header a[href="/wishlist"]').getAttribute('aria-label');
+    const expectedNames = [];
+    for (const slug of ['dien-thoai-saigon-x9-pro', 'dien-thoai-saigon-lite-5g']) {
+      expectedNames.push((await (await fetch(`${BASE}/api/products/${slug}`)).json()).product.name.trim());
+    }
+    check('U4 id lạ, id trùng và giá trị không phải chuỗi bị loại khi nạp localStorage',
+      cleanTitles.length === 2 && expectedNames.every((name) => cleanTitles.includes(name)) && cleanBadge.includes('(2 sản phẩm)'),
+      JSON.stringify({ cleanTitles, expectedNames, cleanBadge }));
+
+    await page.evaluate(() => localStorage.removeItem('shop-ha-wishlist'));
+    await openPage(page, BASE + '/products/dien-thoai-saigon-x9-pro');
+    await page.waitForSelector('button[aria-label*="yêu thích"]', { timeout: 20000 });
+    const detailHeart = page.locator('button[aria-label*="yêu thích"]').first();
+    const detailBefore = await detailHeart.getAttribute('aria-pressed');
+    await detailHeart.click();
+    await page.waitForFunction(() => document.querySelector('button[aria-label*="yêu thích"]')?.getAttribute('aria-pressed') === 'true', null, { timeout: 10000 });
+    const detailLabel = await detailHeart.getAttribute('aria-label');
+    check('U5 trang chi tiết có nút yêu thích và đổi trạng thái',
+      detailBefore === 'false' && detailLabel.startsWith('Bỏ ') && detailLabel.endsWith('khỏi yêu thích'),
+      JSON.stringify({ detailBefore, detailLabel }));
+    await page.evaluate(() => localStorage.removeItem('shop-ha-wishlist'));
+
+    // ---------- V. So sánh sản phẩm ----------
+    await page.evaluate(() => localStorage.removeItem('shop-ha-compare'));
+    await openPage(page, BASE + '/products');
+    await waitCards(page);
+    const pickedCards = [];
+    for (const index of [0, 1]) {
+      const card = page.locator('article').nth(index);
+      pickedCards.push({ name: await cardName(page, index), href: await card.locator('h3 a').getAttribute('href') });
+      await card.locator('button[aria-label*="so sánh"]').click();
+    }
+    await page.waitForFunction(() => {
+      const raw = localStorage.getItem('shop-ha-compare');
+      return raw && JSON.parse(raw).state.ids.length === 2;
+    }, null, { timeout: 10000 });
+    const compareIds1 = await compareState(page);
+    const compareBadge = await page.locator('header a[href="/compare"]').getAttribute('aria-label');
+    check('V1 bật so sánh ở 2 thẻ sản phẩm lưu 2 id và hiện badge ở header',
+      compareIds1.length === 2 && compareBadge.includes('(2 sản phẩm)'),
+      JSON.stringify({ compareIds1, compareBadge }));
+
+    await openPage(page, BASE + '/compare');
+    await page.waitForSelector('table', { timeout: 20000 });
+    const compareColumns = await page.$$eval('[data-compare-column]', (els) => els.map((el) => el.getAttribute('data-compare-column')));
+    const compareTableText = await page.locator('table').innerText();
+    const diffRows = await page.$$eval('tbody tr[data-diff="true"]', (els) => els.map((el) => el.getAttribute('data-row')));
+    check('V2 /compare dựng bảng đúng số cột, đủ tên sản phẩm và đánh dấu dòng khác nhau',
+      compareColumns.join(',') === compareIds1.join(',')
+        && pickedCards.every((card) => compareTableText.includes(card.name))
+        && diffRows.includes('price'),
+      JSON.stringify({ compareColumns, diffRows, pickedCards }));
+
+    await page.getByRole('button', { name: /^Bỏ .+ khỏi so sánh$/ }).first().click();
+    await page.waitForFunction(() => document.querySelectorAll('[data-compare-column]').length === 1, null, { timeout: 10000 });
+    const compareIds2 = await compareState(page);
+    check('V3 nút Bỏ trên bảng xoá đúng một cột khỏi store',
+      compareIds2.length === 1 && !compareIds2.includes(compareIds1[0]),
+      JSON.stringify({ compareIds1, compareIds2 }));
+
+    const phuKien = await apiProducts({ category: 'phu-kien', perPage: 50 });
+    const phuKienIds = phuKien.items.map((item) => item.id);
+    await page.evaluate(
+      (ids) => localStorage.setItem('shop-ha-compare', JSON.stringify({ state: { ids: ids.slice(0, 4) }, version: 1 })),
+      phuKienIds);
+    await openPage(page, BASE + '/products?category=phu-kien');
+    await waitCards(page);
+    const sixthCardName = await cardName(page, 4);
+    const sixthCompare = page.locator('article').nth(4).locator('button[aria-label*="so sánh"]');
+    const sixthDisabled = await sixthCompare.isDisabled();
+    const sixthLabel = await sixthCompare.getAttribute('aria-label');
+    check('V4 đã đủ 4 sản phẩm thì nút so sánh của sản phẩm khác bị khoá kèm lý do',
+      phuKien.items.length >= 5 && !phuKienIds.slice(0, 4).includes(phuKien.items[4].id)
+        && sixthDisabled && /Đã đủ 4 sản phẩm so sánh/.test(sixthLabel),
+      JSON.stringify({ sixthCardName, sixthDisabled, sixthLabel }));
+
+    await openPage(page, BASE + '/compare?ids=p01,p02');
+    await page.waitForSelector('[data-compare-column]', { timeout: 20000 });
+    const sharedColumns = await page.$$eval('[data-compare-column]', (els) => els.map((el) => el.getAttribute('data-compare-column')));
+    const sharedBanner = await page.getByText('Đây là danh sách chia sẻ qua liên kết.').count();
+    check('V5 /compare?ids= hiện đúng danh sách chia sẻ dù store đang giữ 4 sản phẩm khác',
+      sharedColumns.join(',') === 'p01,p02' && sharedBanner === 1,
+      JSON.stringify({ sharedColumns, sharedBanner }));
+
+    await page.getByRole('button', { name: /(Lưu vào|Thay) danh sách so sánh/ }).click();
+    await page.waitForURL(/\/compare$/, { timeout: 15000 });
+    await page.waitForFunction(() => {
+      const raw = localStorage.getItem('shop-ha-compare');
+      return raw && JSON.parse(raw).state.ids.length === 2;
+    }, null, { timeout: 10000 });
+    const savedSharedIds = await compareState(page);
+    check('V6 "Lưu vào danh sách so sánh" thay danh sách đang đầy bằng danh sách chia sẻ',
+      savedSharedIds.join(',') === 'p01,p02',
+      JSON.stringify(savedSharedIds));
+
+    await openPage(page, BASE + '/compare?ids=khong-co,p03,p03');
+    await page.waitForSelector('[data-compare-column]', { timeout: 20000 });
+    const safeColumns = await page.$$eval('[data-compare-column]', (els) => els.map((el) => el.getAttribute('data-compare-column')));
+    check('V7 id lạ và id trùng trong ?ids= bị bỏ', safeColumns.join(',') === 'p03', safeColumns.join(','));
+
+    // Id hỏng đứng trước không được "ăn" chỗ của 4 id hợp lệ (lọc trước, cắt sau).
+    await openPage(page, BASE + '/compare?ids=khong-co,p03,p01,p02,p04');
+    await page.waitForSelector('[data-compare-column]', { timeout: 20000 });
+    const mixedColumns = await page.$$eval('[data-compare-column]', (els) => els.map((el) => el.getAttribute('data-compare-column')));
+    check('V7b vẫn hiện đủ 4 sản phẩm hợp lệ khi ?ids= có id hỏng ở đầu',
+      mixedColumns.join(',') === 'p03,p01,p02,p04', mixedColumns.join(','));
+
+    await openPage(page, BASE + '/compare?ids=khong-co,khong-co-2');
+    await page.waitForSelector('text=Liên kết chia sẻ không còn sản phẩm nào', { timeout: 20000 });
+    const brokenShare = await page.getByText('Liên kết chia sẻ không còn sản phẩm nào').count();
+    check('V7c link chia sẻ hỏng hẳn thì báo rõ thay vì im lặng hiện danh sách của mình',
+      brokenShare === 1 && (await page.$$('[data-compare-column]')).length === 0, brokenShare);
+
+    await page.evaluate(() => localStorage.removeItem('shop-ha-compare'));
+    await openPage(page, BASE + '/compare');
+    await page.waitForSelector('text=Chưa chọn sản phẩm để so sánh', { timeout: 20000 });
+    const emptyCompare = await page.getByText('Chưa chọn sản phẩm để so sánh').count();
+    check('V8 chưa chọn gì thì /compare hiện trạng thái rỗng có hướng dẫn', emptyCompare === 1, emptyCompare);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => {
+      localStorage.setItem('shop-ha-wishlist', JSON.stringify({ state: { ids: ['p01'] }, version: 1 }));
+      localStorage.setItem('shop-ha-compare', JSON.stringify({ state: { ids: ['p01', 'p02'] }, version: 1 }));
+    });
+    await openPage(page, BASE + '/wishlist');
+    await page.waitForSelector('article', { timeout: 20000 });
+    const wishOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    await openPage(page, BASE + '/compare');
+    await page.waitForSelector('table', { timeout: 20000 });
+    const compareOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    check('V9 /wishlist và /compare không tràn ngang ở 390px', wishOverflow <= 1 && compareOverflow <= 1,
+      JSON.stringify({ wishOverflow, compareOverflow }));
+
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.evaluate(() => {
+      localStorage.removeItem('shop-ha-wishlist');
+      localStorage.removeItem('shop-ha-compare');
+    });
 
     // ---------- J. Console hygiene ----------
     check('J1 no page errors', pageErrors.length === 0, pageErrors.slice(0, 3));

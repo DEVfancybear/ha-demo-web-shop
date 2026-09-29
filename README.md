@@ -40,10 +40,12 @@ automatically and the code does not use `useMemo`, `useCallback` or `React.memo`
 | Layer | Location | Notes |
 | --- | --- | --- |
 | Pages | `src/app/**/page.tsx` | App Router; server components for the catalog and the product detail |
-| Mock API | `src/app/api/*/route.ts` | `products`, `products/[slug]`, `products/[slug]/reviews`, `categories`, `orders`, `orders/[id]` (GET + PATCH), `vouchers` |
+| Mock API | `src/app/api/*/route.ts` | `products`, `products/[slug]`, `products/[slug]/reviews`, `search/suggest`, `categories`, `orders`, `orders/[id]` (GET + PATCH), `vouchers` |
 | Data | `src/data/catalog.ts`, `src/data/vouchers.ts` | 16 products with variants, 5 categories, filter/sort/pagination helpers, voucher list |
+| Search suggestions | `src/lib/search.ts` | `GET /api/search/suggest`: ranks name → brand → category and reuses the same accent-stripping and haystack as `filterProducts`, so suggestions never drift from `/products?q=` |
 | Orders + stock | `src/lib/orders.ts`, `src/lib/db.ts` | SQLite via `node:sqlite`: orders, order items, per-variant stock; the server recomputes prices, reserves stock and looks orders up by phone |
 | Cart | `src/stores/cart-store.ts` | Zustand + persist to `localStorage` (key `shop-ha-cart`); stores only `productId` + `variantId` + `quantity` |
+| Wishlist + compare | `src/stores/wishlist-store.ts`, `src/stores/compare-store.ts`, `src/lib/compare.ts` | Zustand + persist (`shop-ha-wishlist`, `shop-ha-compare`); stores only `productId`, compares up to 4 products, `/compare?ids=p01,p02` is a shareable link |
 | Pricing + vouchers | `src/lib/pricing.ts`, `src/lib/vouchers.ts` | One source of truth for the subtotal, the shipping fee, the bulk discount and the voucher discount (cart + server) |
 | Reviews | `src/lib/reviews.ts` | zod-validated reviews in SQLite; the displayed rating blends the catalog seed with real reviews |
 | SEO | `src/lib/seo.ts`, `src/app/sitemap.ts`, `src/app/robots.ts`, `src/app/**/opengraph-image.tsx` | JSON-LD (Product + BreadcrumbList), sitemap, robots and OG images generated with `next/og` |
@@ -52,11 +54,12 @@ automatically and the code does not use `useMemo`, `useCallback` or `React.memo`
 ## Shopping flow
 
 1. Home → pick a category.
-2. `/products` filters by category, brand, max price and keyword, then sorts and paginates (the state lives in the URL).
+2. `/products` filters by category, brand, max price and keyword, then sorts and paginates (the state lives in the URL). The header search box suggests products/categories/brands after 200ms, navigates with ↓/↑ + Enter and closes on Esc; with nothing selected, Enter still searches exactly as before.
 3. `/products/[slug]` shows the product detail; pick a colour/size variant, choose a quantity and add it to the cart. A product with two variants can sit on two cart lines.
 4. `/cart` edits quantities per variant, removes items, applies a voucher code and shows the subtotal, the shipping fee, the bulk discount and the voucher discount.
 5. `/checkout` takes the customer details (validated) and the payment method, then sends `POST /api/orders`; the server checks the remaining stock of each variant, reserves it and recomputes every amount.
 6. `/checkout/success?orderId=...&phone=...` shows the result; `/orders` looks orders up by the phone number used at checkout (plus an optional order code), returns only that phone's orders and can move an order one step forward (`pending → confirmed → shipping → done`).
+7. The heart on a product card or detail page saves the product to `/wishlist` (browser `localStorage` only); the compare button gathers up to 4 products into `/compare` to line up price/specs/stock, and `/compare?ids=p01,p02` is a shareable link.
 
 ## Pricing rules
 
@@ -85,7 +88,7 @@ Orders, per-variant stock and reviews live in SQLite, opened with `node:sqlite` 
 
 ## Tests
 
-The E2E suite (Playwright, running on the machine's built-in Edge) has 143 checks: home page, search (including Vietnamese without diacritics and by category name), category/brand/price filters, sorting, pagination (including decimal `page`/`perPage` and `maxPrice=abc`), product detail, variants (picking a variant, two variants on two cart lines, per-variant stock), cart, cart tampering through `localStorage`, voucher codes (valid, unknown, under the minimum, ignored client price), checkout, per-variant stock reservation, order lookup by phone, the `PATCH /api/orders/[id]` status flow, product reviews through the API and the form, SEO (sitemap, robots, JSON-LD, OG image), empty and 404 states, the 390px mobile layout and console logs. Every list assertion is compared against the mock API.
+The E2E suite (Playwright, running on the machine's built-in Edge) has 173 checks: home page, search (including Vietnamese without diacritics and by category name), autocomplete (`/api/search/suggest`: matches `/api/products`, Vietnamese without diacritics, blocks queries under 2 characters, clamps `limit`; in the UI: listbox + ARIA, ↓/Enter jumps to a suggestion, Esc closes but keeps the keyword, no popup when a `?q=` page loads, late responses cannot reopen a closed popup, `aria-expanded` stays false without a listbox, Tab closes the popup, clicking a category suggestion, a failed suggest API says "could not load the suggestions" instead of "no suggestions" and Enter still submits the form), category/brand/price filters, sorting, pagination (including decimal `page`/`perPage` and `maxPrice=abc`), product detail, variants (picking a variant, two variants on two cart lines, per-variant stock), cart, cart tampering through `localStorage`, voucher codes (valid, unknown, under the minimum, ignored client price), checkout, per-variant stock reservation, order lookup by phone, the `PATCH /api/orders/[id]` status flow, product reviews through the API and the form, wishlist (save/remove, header badge, `/wishlist`, hand-edited `localStorage`), compare (`/compare`, 4-product cap, shareable `?ids=`, unknown/duplicate ids, broken share links), SEO (sitemap, robots, JSON-LD, OG image), empty and 404 states, the 390px mobile layout and console logs. Every list assertion is compared against the mock API.
 
 ```bash
 # window 1 — dev server on a throwaway database
@@ -98,7 +101,8 @@ npm run test:e2e
 ```
 
 - By default the tests call `http://127.0.0.1:3210`; change it with `BASE_URL=http://localhost:3000 npm run test:e2e`.
-- The suite creates orders, consumes stock and writes reviews, so start it against a fresh database (delete the file while the server is stopped, then start the server). Running it twice against the same file will fail the "both variants are still in stock" precondition.
+- The suite creates orders, consumes stock and writes reviews, so start it against a fresh database (delete the file while the server is stopped, then start the server). Running it twice against the same file fails the `D0` precondition check ("the database still has enough stock") instead of timing out after 30s.
+- A missing, empty or corrupt `SHOP_DB_PATH` file no longer turns every route into a 500: `readDb()` returns `null` and the catalog stays the source of truth.
 - The dev server allows `127.0.0.1` through `allowedDevOrigins` in `next.config.ts`; Next.js 16 blocks cross-origin dev requests by default, so pages would render without hydrating without that entry.
 - Use `PW_CHANNEL=chrome` if the machine has no Edge.
 - Next.js hydrates after the HTML is visible, so the suite waits for `html[data-hydrated="true"]` (set by the cart button in the header) before it clicks; otherwise a click can land before the handlers are attached.
@@ -123,5 +127,7 @@ Optional. See `.env.example` to change the site name or the hotline (the default
 - Product detail pages are statically generated in production, so their stock line can lag behind the database; the server re-reads SQLite (and reserves stock inside a transaction) whenever an order is created.
 - Reviews are fetched by a client component so a static product page can still show new ones; the header rating stays the catalog seed.
 - No authentication and no real payment: order lookup only proves ownership of a phone number, and the cart clamps quantities against the catalog stock while the server stays the source of truth.
+- Stock numbers on `/compare` and `/wishlist` come from the catalog in the browser (client render), so they can lag behind the database; the detail page and `/products` fetch fresh numbers from the mock API.
+- Wishlist and compare live only in each browser's `localStorage` (no cross-device sync, clearing browser data loses them); unknown/duplicate ids are dropped on load so hand-edits create no junk rows, and `/compare?ids=` is just a snapshot of a shared list — it does not write to the visitor's machine.
 
 > The UI text is Vietnamese; only the documentation is bilingual.
